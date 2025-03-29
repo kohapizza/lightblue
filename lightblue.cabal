@@ -1,0 +1,197 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.37.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           lightblue
+version:        0.3.4
+synopsis:       A Japanese CCG parser with DTS
+description:    Please see the README on GitHub at <https://github.com/DaisukeBekki/lightblue#README.md>
+category:       CCG Parser, Dependent Type Prover
+stability:      beta
+homepage:       https://github.com/DaisukeBekki/lightblue
+author:         Daisuke Bekki and Bekki Laboratory
+maintainer:     Daisuke Bekki
+copyright:      Daisuke Bekki
+license:        AllRightsReserved
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    ChangeLog.md
+    src/Parser/Language/Japanese/Juman/Juman.dic
+
+library
+  exposed-modules:
+      Parser.ChartParser
+      Parser.CCG
+      Parser.Language
+      Parser.Language.Japanese.Lexicon
+      Parser.Language.Japanese.MyLexicon
+      Parser.Language.Japanese.Templates
+      Parser.Language.Japanese.Juman.CallJuman
+      Parser.Language.Japanese.Juman.Config
+      Interface
+      Interface.Text
+      Interface.TeX
+      Interface.XML
+      Interface.HTML
+      Interface.SVG
+      Interface.Tree
+      DTS.Index
+      DTS.GeneralTypeQuery
+      DTS.UDTTdeBruijn
+      DTS.UDTTwithName
+      DTS.DTTdeBruijn
+      DTS.DTTwithName
+      DTS.QueryTypes
+      DTS.TypeChecker
+      DTS.NaturalLanguageInference
+      DTS.Prover.Wani.WaniBase
+      DTS.Prover.Wani.Forward
+      DTS.Prover.Wani.Backward
+      DTS.Prover.Wani.Arrowterm
+      DTS.Prover.Wani.Prove
+  other-modules:
+      Parser.Language.Japanese.Juman.ConvertJumanDic
+      Parser.Language.Japanese.Juman.ParseJumanDic
+      Paths_lightblue
+  hs-source-dirs:
+      src
+  default-extensions:
+      OverloadedStrings
+  ghc-options: -Wall
+  build-depends:
+      aeson >=1.0
+    , array >=0.5.3.0
+    , base >=4.8 && <5
+    , bytestring >=0.10
+    , containers >=0.4
+    , data-default
+    , directory >=1.3.3.0
+    , filepath >=1.4
+    , jsem >=1.1
+    , list-t >=1.0.0.0
+    , mtl >=2.2.2
+    , nlp-tools >=0.2.0
+    , optparse-applicative >=0.13
+    , parsec >=3.1.14
+    , process >=1.2
+    , semigroups >=0.16
+    , serialise >=0.2.4
+    , shelly >=1.8.1
+    , split
+    , store >=0.7.14
+    , text >=1.2
+    , time >=1.4
+    , xml-conduit >=1.9
+    , yaml >=0.8.3
+  default-language: Haskell2010
+
+executable lightblue
+  main-is: lightblueMain.hs
+  other-modules:
+      Paths_lightblue
+  hs-source-dirs:
+      app
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson >=1.0
+    , array >=0.5.3.0
+    , base >=4.8 && <5
+    , bytestring >=0.10
+    , containers >=0.4
+    , data-default
+    , directory >=1.3.3.0
+    , filepath >=1.4
+    , jsem >=1.1
+    , lightblue
+    , list-t >=1.0.0.0
+    , mtl >=2.2.2
+    , nlp-tools >=0.2.0
+    , optparse-applicative >=0.13
+    , parsec >=3.1.14
+    , process >=1.2
+    , semigroups >=0.16
+    , serialise >=0.2.4
+    , shelly >=1.8.1
+    , split
+    , store >=0.7.14
+    , text >=1.2
+    , time >=1.4
+    , xml-conduit >=1.9
+    , yaml >=0.8.3
+  default-language: Haskell2010
+
+test-suite testJumanDicSettings
+  type: exitcode-stdio-1.0
+  main-is: testJumanDicSettings.hs
+  other-modules:
+      Paths_lightblue
+  hs-source-dirs:
+      test/Juman
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson >=1.0
+    , array >=0.5.3.0
+    , base >=4.8 && <5
+    , bytestring >=0.10
+    , containers >=0.4
+    , data-default
+    , directory >=1.3.3.0
+    , filepath >=1.4
+    , jsem >=1.1
+    , lightblue
+    , list-t >=1.0.0.0
+    , mtl >=2.2.2
+    , nlp-tools >=0.2.0
+    , optparse-applicative >=0.13
+    , parsec >=3.1.14
+    , process >=1.2
+    , semigroups >=0.16
+    , serialise >=0.2.4
+    , shelly >=1.8.1
+    , split
+    , store >=0.7.14
+    , text >=1.2
+    , time >=1.4
+    , xml-conduit >=1.9
+    , yaml >=0.8.3
+  default-language: Haskell2010
+
+test-suite typeCheck
+  type: exitcode-stdio-1.0
+  main-is: testTypeChecker.hs
+  other-modules:
+      Paths_lightblue
+  hs-source-dirs:
+      test/DTS
+  ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      aeson >=1.0
+    , array >=0.5.3.0
+    , base >=4.8 && <5
+    , bytestring >=0.10
+    , containers >=0.4
+    , data-default
+    , directory >=1.3.3.0
+    , filepath >=1.4
+    , jsem >=1.1
+    , lightblue
+    , list-t >=1.0.0.0
+    , mtl >=2.2.2
+    , nlp-tools >=0.2.0
+    , optparse-applicative >=0.13
+    , parsec >=3.1.14
+    , process >=1.2
+    , semigroups >=0.16
+    , serialise >=0.2.4
+    , shelly >=1.8.1
+    , split
+    , store >=0.7.14
+    , text >=1.2
+    , time >=1.4
+    , xml-conduit >=1.9
+    , yaml >=0.8.3
+  default-language: Haskell2010
