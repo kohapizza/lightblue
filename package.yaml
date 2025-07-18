@@ -94,6 +94,7 @@ library:
   - Interface.XML
   - Interface.HTML
   - Interface.Express.Express
+  - Interface.PrintParseResult
   - Interface.SVG
   - Interface.Tree
   - DTS.Index
