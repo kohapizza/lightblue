@@ -500,7 +500,7 @@
 .ps-outcome-pending
   background: #ffe69c
   color: #8a6d3b
-=======
+
 /* horizontal scrollbar placed at TOP (helper) */
           .hscroll-wrap
             position: relative;
@@ -517,7 +517,6 @@
             scrollbar-width: none;
           .hide-x-scrollbar::-webkit-scrollbar
             display: none;
->>>>>>> fix-scroll-bar-posision
 
 /* form */
           .parsing-input
@@ -899,6 +898,5 @@
   border-color: #1976d2
 .inf-node-actions
   margin-bottom: 6px
-=======
-            background: #f2f6fb;
->>>>>>> fix-scroll-bar-posision
+  background: #f2f6fb;
+
