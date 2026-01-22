@@ -334,7 +334,7 @@
           .tab-tcq-content
             display: flex;
             text-align: left;
-            justify-content: flex-start;
+            justify-content: center;
 
           .tab-tcds-content
             display: block;
@@ -500,6 +500,24 @@
 .ps-outcome-pending
   background: #ffe69c
   color: #8a6d3b
+=======
+/* horizontal scrollbar placed at TOP (helper) */
+          .hscroll-wrap
+            position: relative;
+          .hscroll-top
+            overflow-x: auto;
+            overflow-y: hidden;
+            height: 16px;
+            margin-bottom: 6px;
+          .hscroll-top-inner
+            height: 1px;
+          .hide-x-scrollbar
+            overflow-x: auto;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          .hide-x-scrollbar::-webkit-scrollbar
+            display: none;
+>>>>>>> fix-scroll-bar-posision
 
 /* form */
           .parsing-input
@@ -881,3 +899,6 @@
   border-color: #1976d2
 .inf-node-actions
   margin-bottom: 6px
+=======
+            background: #f2f6fb;
+>>>>>>> fix-scroll-bar-posision
