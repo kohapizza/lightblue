@@ -96,7 +96,7 @@ widgetizeDepth setting depth node = case Parser.CCG.daughters node of
                         <td>
                           <math xmlns='http://www.w3.org/1998/Math/MathML'>^{widgetizeWith setting $ sem node}
             <td valign="baseline">
-              <span>LEX
+              <span style="font-size:0.8em;">#{Parser.CCG.source node}
         |]
     dtrs -> do
       -- 子の数*２
@@ -169,26 +169,29 @@ instance Widgetizable Cat where
                               ^{widgetize' u}
                               <mn>:[#{T.pack $ show i}]
                               |]
+    S []        -> [whamlet|<mi>S
+                           |]
     S (pos:(conj:pm)) -> let x = toText pm
                              nullx = T.null x in
                          [whamlet|
                            <msub>
                              <mi>S
                              <mstyle color='Purple'>
-                               <mtable columnalign='left'>
+                               <mtable columnalign='left' style="text-align:left">
                                  <mtr class="sf">
-                                   <mtd>^{widgetize pos}
+                                   <mtd columnalign='left' style="text-align:left">^{widgetize pos}
                                  <mtr class="sf">
-                                   <mtd>
-                                     <mpadded height='-0.5em'>^{widgetize conj}
+                                   <mtd columnalign='left' style="text-align:left">^{widgetize conj}
                                  <mtr class="sf">
-                                   <mtd>
-                                     <mpadded height='-0.5em'>^{widgetize pm}
+                                   <mtd columnalign='left' style="text-align:left">^{widgetize pm}
                                  |]
+    NP []       -> [whamlet|<mi>NP
+                           |]
     NP [cas]    -> [whamlet|<msub>
                               <mi>NP
                               <mtext class="sf">^{widgetize cas}
                            |]
+    Sbar []     -> [whamlet|<menclose notation='top'><mi>S|]
     Sbar [sf]   -> [whamlet|<msub>
                               <menclose notation='top'>
                                 <mi>S
@@ -357,11 +360,9 @@ instance Widgetizable UDWN.Preterm where
         |]
     UDWN.Disj a b -> [whamlet|
       <mrow>
-        <mi>
-          ^{widgetize a}
+        ^{widgetize a}
         <mo>+
-        <mi>
-          ^{widgetize b}
+        ^{widgetize b}
         |]
     UDWN.Iota s p -> [whamlet|
         <mrow>
