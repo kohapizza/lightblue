@@ -397,6 +397,11 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
                 Just BrowserFirefox -> Env.setEnv "LB_EXPRESS_BROWSER" "firefox"
                 Just BrowserDefault -> Env.setEnv "LB_EXPRESS_BROWSER" "default"
                 Nothing             -> return ()
+              -- ProofSearchSetting を Express に渡す
+              Express.setProofSearchSetting $ QT.defaultProofSearchSetting {
+                QT.maxDepth = Just maxDepth,
+                QT.maxTime = Just maxTime
+                }
               -- Express を起動
               Express.showExpressInference parseSetting prover [("dummy",DTT.Entity)] [] sentences
         _ -> do

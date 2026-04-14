@@ -3,7 +3,8 @@
 module DTS.Prover.Wani.Prove
 (
   display,
-  prove'
+  prove',
+  prove'WithLog
 ) where
 
 import qualified Interface.Tree as UDT
@@ -11,7 +12,8 @@ import qualified DTS.DTTdeBruijn as DdB
 import qualified DTS.QueryTypes as QT
 import qualified DTS.Prover.Wani.Arrowterm as A
 import qualified DTS.Prover.Wani.BackwardWithRules as BR
-import qualified DTS.Prover.Wani.WaniBase as WB 
+import qualified DTS.Prover.Wani.WaniBase as WB
+import DTS.Prover.Wani.SearchLog (SearchEventKind(..), SearchLog, recordEvent)
 import qualified Interface.Tree as UDT
 import qualified DTS.QueryTypes as QT
 
@@ -59,16 +61,21 @@ searchProofWithIncrementalDepth :: A.SAEnv -> A.AEnv -> WB.AType -> WB.Depth -> 
 searchProofWithIncrementalDepth a b c d setting timeLimitDiff currentDepth maybeLim =
   Time.getCurrentTime >>= \currentTime ->
     let timeLimit = M.maybe M.Nothing (\t -> let timeLimit = Time.addUTCTime t currentTime in (M.Just timeLimit) ) timeLimitDiff in
+      recordEvent (WB.searchLog setting) EvIterDeepen 0 (T.pack $ "d=" ++ show currentDepth) Nothing (T.pack $ "d=" ++ show currentDepth ++ " / timeLimit: " ++ show timeLimit) >>
       searchProof a b c d setting{WB.maxdepth = currentDepth}{WB.timeLimit = timeLimit }
         >>= \result ->
-          D.trace ("d=" ++ (show currentDepth) ++ {--("timeLimitDiff : "++(show timeLimitDiff)++" currentTime : "++(show currentTime)) ++--} (" / timeLimit : "++(show timeLimit))) $ 
+          D.trace ("d=" ++ (show currentDepth) ++ {--("timeLimitDiff : "++(show timeLimitDiff)++" currentTime : "++(show currentTime)) ++--} (" / timeLimit : "++(show timeLimit))) $
           if (null (WB.trees result) && maybe True (currentDepth <) maybeLim)
-            then searchProofWithIncrementalDepth a b c d setting timeLimitDiff (currentDepth+1) maybeLim 
+            then searchProofWithIncrementalDepth a b c d setting timeLimitDiff (currentDepth+1) maybeLim
             else return result
 
 -- | Prover for lightblue:
 prove' :: QT.ProverBuilder
-prove' QT.ProofSearchSetting{..} (DdB.ProofSearchQuery sig ctx typ) =  -- LiftT IO (Tree (U.Judgment U.DTT) UDTTrule)
+prove' = prove'WithLog Nothing
+
+-- | Prover with optional structured event logging for visualization
+prove'WithLog :: Maybe SearchLog -> QT.ProverBuilder
+prove'WithLog mLog QT.ProofSearchSetting{..} (DdB.ProofSearchQuery sig ctx typ) =  -- LiftT IO (Tree (U.Judgment U.DTT) UDTTrule)
   let setting = WB.Setting {
         WB.mode = case logicSystem of
                     Nothing -> WB.Plain
@@ -86,7 +93,9 @@ prove' QT.ProofSearchSetting{..} (DdB.ProofSearchQuery sig ctx typ) =  -- LiftT 
         WB.oracle = oracle,
         WB.oracleThreshold=0.5,
         WB.enableEq = True,
-        WB.enableConcurrent = True
+        WB.enableConcurrent = False,  -- disabled for search log accuracy
+        WB.searchLog = mLog,
+        WB.searchLogRuleName = Nothing
         };
       ioResult = hojo ctx ((A.aEntityName,DdB.Type):sig) typ setting (M.maybe Nothing (\t -> M.Just $ toEnum (t * (10^9))) maxTime)
   in ListT.lift ioResult >>= \result ->

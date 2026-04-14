@@ -1,0 +1,361 @@
+// Search Log Visualization - D3.js based
+
+(function() {
+  "use strict";
+
+  // Color mapping for outcomes
+  var outcomeColor = {
+    "success": "#38a169",
+    "fail": "#e53e3e",
+    "depth_exceeded": "#dd6b20",
+    "loop_avoided": "#d69e2e",
+    "time_limit": "#a0aec0",
+    "pending": "#718096"
+  };
+
+  // Shared tooltip
+  var tooltip = d3.select("body").append("div")
+    .attr("class", "sl-tooltip")
+    .style("display", "none");
+
+  function showTooltip(evt, html) {
+    tooltip.html(html)
+      .style("display", "block")
+      .style("left", (evt.pageX + 12) + "px")
+      .style("top", (evt.pageY - 10) + "px");
+  }
+  function hideTooltip() {
+    tooltip.style("display", "none");
+  }
+
+  // =====================================================================
+  // 1. Search Tree (D3 tree layout)
+  // =====================================================================
+  function initSearchTree() {
+    var container = d3.select("#search-tree-container");
+    var rect = container.node().getBoundingClientRect();
+    var width = rect.width || 600;
+    var height = rect.height || 400;
+
+    var svg = container.append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+    var g = svg.append("g").attr("transform", "translate(40, 20)");
+
+    // Zoom
+    svg.call(d3.zoom().scaleExtent([0.1, 5]).on("zoom", function(event) {
+      g.attr("transform", event.transform);
+    }));
+
+    d3.json("@{SearchLogTreeR}").then(function(data) {
+      if (!data.roots || data.roots.length === 0) {
+        container.append("div").style("padding", "20px").style("color", "#999").text("No search tree data");
+        return;
+      }
+
+      // Use the root with the most descendants (last iterative deepening round)
+      function countNodes(n) { return 1 + (n.children || []).reduce(function(s, c) { return s + countNodes(c); }, 0); }
+      var rootData = data.roots.reduce(function(best, r) { return countNodes(r) > countNodes(best) ? r : best; }, data.roots[0]);
+      var root = d3.hierarchy(rootData, function(d) { return d.children; });
+
+      // Collapse beyond depth 3
+      root.descendants().forEach(function(d) {
+        if (d.depth > 3) {
+          d._children = d.children;
+          d.children = null;
+        }
+      });
+
+      var treeLayout = d3.tree().nodeSize([24, 180]);
+
+      function update(source) {
+        treeLayout(root);
+        var nodes = root.descendants();
+        var links = root.links();
+
+        // Links
+        var link = g.selectAll(".tree-link").data(links, function(d) { return d.target.data.id; });
+        link.exit().remove();
+        var linkEnter = link.enter().append("path")
+          .attr("class", "tree-link");
+        link.merge(linkEnter)
+          .attr("d", function(d) {
+            return "M" + d.source.y + "," + d.source.x
+              + "C" + (d.source.y + d.target.y) / 2 + "," + d.source.x
+              + " " + (d.source.y + d.target.y) / 2 + "," + d.target.x
+              + " " + d.target.y + "," + d.target.x;
+          })
+          .attr("stroke", function(d) {
+            return d.target.data.outcome === "success" ? "#38a169" : "#ccc";
+          })
+          .attr("stroke-dasharray", function(d) {
+            return d.target.data.outcome === "success" ? null : "4,3";
+          });
+
+        // Nodes
+        var node = g.selectAll(".tree-node").data(nodes, function(d) { return d.data.id; });
+        node.exit().remove();
+        var nodeEnter = node.enter().append("g")
+          .attr("class", "tree-node")
+          .on("click", function(event, d) {
+            if (d.children) {
+              d._children = d.children;
+              d.children = null;
+            } else if (d._children) {
+              d.children = d._children;
+              d._children = null;
+            }
+            update(d);
+          })
+          .on("mouseover", function(event, d) {
+            var dur = d.data.durationMs ? d.data.durationMs.toFixed(2) + "ms" : "N/A";
+            var goalText = d.data.goal.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+            // Rule trials
+            var trialsHtml = "";
+            if (d.data.ruleTrials && d.data.ruleTrials.length > 0) {
+              trialsHtml = "<div class='sl-tooltip-trials'><b>Rules tried:</b>";
+              d.data.ruleTrials.forEach(function(t) {
+                var icon = t.status === "accept" ? "&#10004;" : "&#10008;";
+                var cls = t.status === "accept" ? "sl-trial-accept" : "sl-trial-reject";
+                trialsHtml += "<div class='" + cls + "'>" + icon + " " + t.rule + "</div>";
+              });
+              trialsHtml += "</div>";
+            }
+            // AND/OR info
+            var andOrHtml = "";
+            if (d.parent && d.data.subgoalSetId >= 0) {
+              var allSiblings = (d.parent.data.children || []);
+              var sameSet = allSiblings.filter(function(s) { return s.subgoalSetId === d.data.subgoalSetId; });
+              var totalSets = [];
+              allSiblings.forEach(function(s) { if (s.subgoalSetId >= 0 && totalSets.indexOf(s.subgoalSetId) < 0) totalSets.push(s.subgoalSetId); });
+              if (sameSet.length > 1) {
+                andOrHtml = "<div class='sl-tooltip-detail' style='color:#68d391'>AND: " + sameSet.length + " subgoals in this SubGoalSet (all must succeed)</div>";
+              }
+              if (totalSets.length > 1) {
+                andOrHtml += "<div class='sl-tooltip-detail' style='color:#90cdf4'>OR: " + totalSets.length + " SubGoalSets tried (one success suffices)</div>";
+              }
+            }
+            showTooltip(event,
+              "<div class='sl-tooltip-label'>" + (d.data.rule || "root") + " (d=" + d.data.depth + ")</div>" +
+              "<div class='sl-tooltip-detail'>Duration: " + dur + " | Outcome: " + d.data.outcome + "</div>" +
+              andOrHtml +
+              "<div class='sl-tooltip-goal'>" + goalText + "</div>" +
+              trialsHtml
+            );
+          })
+          .on("mouseout", hideTooltip);
+
+        nodeEnter.append("circle")
+          .attr("r", function(d) {
+            var dur = d.data.durationMs || 0;
+            return Math.max(4, Math.min(12, Math.sqrt(dur) * 0.8));
+          })
+          .attr("fill", function(d) { return outcomeColor[d.data.outcome] || "#718096"; });
+
+        nodeEnter.append("text")
+          .attr("dy", "0.31em")
+          .attr("x", function(d) { return d.children || d._children ? -14 : 14; })
+          .attr("text-anchor", function(d) { return d.children || d._children ? "end" : "start"; })
+          .text(function(d) {
+            var label = d.data.rule || (d.parent ? "goal" : "root");
+            // Show subgoal index within SubGoalSet (AND group)
+            if (d.parent && d.data.subgoalSetId >= 0) {
+              var allSiblings = (d.parent.data.children || []);
+              var sameSet = allSiblings.filter(function(s) { return s.subgoalSetId === d.data.subgoalSetId; });
+              if (sameSet.length > 1) {
+                var idx = sameSet.findIndex(function(s) { return s.id === d.data.id; }) + 1;
+                label += " (" + idx + "/" + sameSet.length + ")";
+              }
+            }
+            var childCount = (d.children ? d.children.length : 0) + (d._children ? d._children.length : 0);
+            if (childCount > 0) label += " [" + childCount + "]";
+            var dur = d.data.durationMs;
+            if (dur != null) label += " " + dur.toFixed(1) + "ms";
+            return label;
+          })
+          .style("font-size", "11px");
+
+        g.selectAll(".tree-node")
+          .attr("transform", function(d) { return "translate(" + d.y + "," + d.x + ")"; });
+      }
+
+      update(root);
+    });
+  }
+
+  // =====================================================================
+  // 2. Flame Graph (D3 partition layout)
+  // =====================================================================
+  function initFlameGraph() {
+    var container = d3.select("#flame-graph-container");
+    var rect = container.node().getBoundingClientRect();
+    var width = rect.width || 600;
+    var height = rect.height || 300;
+
+    var svg = container.append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+    d3.json("@{SearchLogFlameR}").then(function(data) {
+      if (!data || !data.children || data.children.length === 0) {
+        container.append("div").style("padding", "20px").style("color", "#999").text("No flame graph data");
+        return;
+      }
+
+      var root = d3.hierarchy(data)
+        .sum(function(d) { return d.children && d.children.length > 0 ? 0 : Math.max(d.value, 0.01); })
+        .sort(function(a, b) { return b.value - a.value; });
+
+      d3.partition().size([width, height]).padding(1)(root);
+
+      var cell = svg.selectAll("g").data(root.descendants()).join("g")
+        .attr("transform", function(d) { return "translate(" + d.x0 + "," + (height - d.y1) + ")"; });
+
+      cell.append("rect")
+        .attr("class", "flame-cell")
+        .attr("width", function(d) { return Math.max(0, d.x1 - d.x0); })
+        .attr("height", function(d) { return Math.max(0, d.y1 - d.y0); })
+        .attr("fill", function(d) { return outcomeColor[d.data.outcome] || "#718096"; })
+        .on("mouseover", function(event, d) {
+          showTooltip(event,
+            "<div class='sl-tooltip-label'>" + d.data.name + "</div>" +
+            "<div class='sl-tooltip-detail'>Duration: " + d.data.value.toFixed(2) + "ms</div>"
+          );
+        })
+        .on("mouseout", hideTooltip);
+
+      cell.append("text")
+        .attr("class", "flame-label")
+        .attr("x", 3)
+        .attr("y", function(d) { return (d.y1 - d.y0) / 2 + 3; })
+        .text(function(d) {
+          var w = d.x1 - d.x0;
+          if (w < 30) return "";
+          var name = d.data.name;
+          var maxChars = Math.floor(w / 6);
+          return name.length > maxChars ? name.substring(0, maxChars) + ".." : name;
+        });
+    });
+  }
+
+  // =====================================================================
+  // 3. Rule Statistics Table
+  // =====================================================================
+  function initRuleStats() {
+    var container = d3.select("#rule-stats-container");
+
+    d3.json("@{SearchLogStatsR}").then(function(data) {
+      if (!data.rules || data.rules.length === 0) {
+        container.append("div").style("padding", "20px").style("color", "#999").text("No rule statistics");
+        return;
+      }
+
+      var rules = data.rules;
+      var maxTotal = d3.max(rules, function(d) { return d.totalMs; }) || 1;
+
+      var table = container.append("table").attr("class", "stats-table");
+      var thead = table.append("thead").append("tr");
+      var columns = [
+        { key: "rule", label: "Rule" },
+        { key: "attempts", label: "Attempts" },
+        { key: "successes", label: "Success" },
+        { key: "failures", label: "Fail" },
+        { key: "rate", label: "Rate" },
+        { key: "totalMs", label: "Total (ms)" },
+        { key: "bar", label: "" }
+      ];
+
+      columns.forEach(function(col) {
+        thead.append("th").text(col.label)
+          .on("click", function() {
+            if (col.key === "bar") return;
+            var asc = this.dataset.asc === "true";
+            this.dataset.asc = !asc;
+            rules.sort(function(a, b) {
+              return asc ? (a[col.key] > b[col.key] ? 1 : -1) : (a[col.key] < b[col.key] ? 1 : -1);
+            });
+            renderRows();
+          });
+      });
+
+      var tbody = table.append("tbody");
+
+      function renderRows() {
+        tbody.selectAll("tr").remove();
+        rules.forEach(function(r) {
+          var tr = tbody.append("tr");
+          tr.append("td").text(r.rule);
+          tr.append("td").text(r.attempts);
+          tr.append("td").text(r.successes);
+          tr.append("td").text(r.failures);
+          tr.append("td").text((r.rate * 100).toFixed(1) + "%");
+          tr.append("td").text(r.totalMs.toFixed(1));
+          var barTd = tr.append("td");
+          var barWidth = Math.max(2, (r.totalMs / maxTotal) * 80);
+          var successWidth = r.attempts > 0 ? barWidth * (r.successes / r.attempts) : 0;
+          barTd.append("span").attr("class", "stats-bar stats-bar-success").style("width", successWidth + "px");
+          barTd.append("span").attr("class", "stats-bar stats-bar-fail").style("width", (barWidth - successWidth) + "px");
+        });
+      }
+
+      renderRows();
+    });
+  }
+
+  // =====================================================================
+  // 4. Failure Analysis
+  // =====================================================================
+  function initFailureAnalysis() {
+    var container = d3.select("#failure-analysis-container");
+
+    d3.json("@{SearchLogStatsR}").then(function(data) {
+      if (!data.failures || data.failures.length === 0) {
+        container.append("div").style("padding", "20px").style("color", "#999").text("No failures recorded");
+        return;
+      }
+
+      var categoryLabels = {
+        "depth_exceeded": "Depth Exceeded",
+        "loop_avoided": "Loop Avoided",
+        "time_limit": "Time Limit",
+        "deduce_failed": "Deduce Failed"
+      };
+
+      // Group by category
+      var grouped = d3.group(data.failures, function(d) { return d.category; });
+
+      grouped.forEach(function(items, cat) {
+        var group = container.append("div").attr("class", "failure-group");
+        group.append("div").attr("class", "failure-group-header")
+          .text((categoryLabels[cat] || cat) + " (" + items.length + ")");
+
+        // Sort by count descending, show top 20
+        items.sort(function(a, b) { return b.count - a.count; });
+        var shown = items.slice(0, 20);
+
+        shown.forEach(function(f) {
+          var item = group.append("div").attr("class", "failure-item");
+          item.append("span").attr("class", "failure-count").text(f.count);
+          item.append("span").attr("class", "failure-depth").text("d=" + f.depth);
+          item.append("span").attr("class", "failure-goal").text(f.goal.substring(0, 120));
+        });
+
+        if (items.length > 20) {
+          group.append("div").attr("class", "failure-item")
+            .style("color", "#999").style("font-style", "italic")
+            .text("... and " + (items.length - 20) + " more");
+        }
+      });
+    });
+  }
+
+  // =====================================================================
+  // Initialize all panels
+  // =====================================================================
+  initSearchTree();
+  initFlameGraph();
+  initRuleStats();
+  initFailureAnalysis();
+
+})();

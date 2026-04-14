@@ -9,6 +9,7 @@ module Interface.Express.Express (
   , setDisplaySetting
   , setDisplayOptions
   , setPrewarmOptions
+  , setProofSearchSetting
   ) where
 
 import Yesod
@@ -45,11 +46,15 @@ import qualified DTS.UDTTdeBruijn as UDTT
 import qualified DTS.TypeChecker as TY
 import qualified Interface.Tree as Tree
 import Interface.Text (SimpleText(..))
+import Interface.HTML (MathML(..))
 import Data.Char (toLower)
 import qualified ListT as LT (ListT, uncons, toList, take)
 import Control.Monad (when)
 import qualified Data.ByteString as BS
 import qualified Data.Store as Store
+import qualified DTS.Prover.Wani.SearchLog as SL
+import qualified DTS.Prover.Wani.Prove as WaniProve
+import Data.Aeson (object, (.=), Value)
 
 -- JSeM 用: 各文の N-best ノードを保持する IORef
 -- [(入力文, その文に対する [CCG.Node])] を格納
@@ -165,6 +170,9 @@ setPrewarmOptions k par = do
   atomicWriteIORef currentPrewarmTopKRef (max 1 k)
   atomicWriteIORef currentPrewarmParallelRef (max 1 par)
 
+setProofSearchSetting :: QT.ProofSearchSetting -> IO ()
+setProofSearchSetting = atomicWriteIORef currentProofSearchSettingRef
+
 -- schedule with concurrency limit
 scheduleLimited :: IO () -> IO ()
 scheduleLimited action = do
@@ -252,6 +260,16 @@ currentPSDonePosRef = unsafePerformIO $ newIORef False
 currentPSDoneNegRef :: IORef Bool
 currentPSDoneNegRef = unsafePerformIO $ newIORef False
 
+-- Search log for wani visualization
+{-# NOINLINE currentSearchLogRef #-}
+currentSearchLogRef :: IORef (Maybe SL.SearchLog)
+currentSearchLogRef = unsafePerformIO $ newIORef Nothing
+
+-- ProofSearchSetting used by the CLI (for logged search)
+{-# NOINLINE currentProofSearchSettingRef #-}
+currentProofSearchSettingRef :: IORef QT.ProofSearchSetting
+currentProofSearchSettingRef = unsafePerformIO $ newIORef QT.defaultProofSearchSetting
+
 -- 表示設定を保持する IORef
 {-# NOINLINE currentDisplaySettingRef #-}
 currentDisplaySettingRef :: IORef WE.DisplaySetting
@@ -303,6 +321,11 @@ mkYesod "App" [parseRoutes|
 /export/sem ExportSemR GET
 /export/sem/text ExportSemTextR GET
 /export/node ExportNodeR GET
+/searchlog SearchLogR GET
+/searchlog/tree SearchLogTreeR GET
+/searchlog/stats SearchLogStatsR GET
+/searchlog/flame SearchLogFlameR GET
+/searchlog/events SearchLogEventsR GET
 /error ErrorR GET
 /shutdown ShutdownR GET
 |]
@@ -1080,6 +1103,7 @@ getProofSearchR = do
                 <div .ps-header>
                   <div .ps-header-title>Proof Search
                   <div .ps-header-ctl>
+                    <a .btn .btn-viz href=@{SearchLogR}>Search Log
                     <span #ps-outcome .ps-outcome>Searching...
                   <div .ps-sentences>
                     $forall (i, sp) <- enumerated
@@ -1282,8 +1306,13 @@ getProofStartR = do
           if already
             then return $ object ["status" .= ("cached" :: TS.Text)]
             else do
+              -- Create search log for visualization
+              searchLog <- liftIO $ SL.newSearchLog
+              liftIO $ atomicWriteIORef currentSearchLogRef (Just searchLog)
+              psSetting <- liftIO $ readIORef currentProofSearchSettingRef
+              let loggedProver = WaniProve.prove'WithLog (Just searchLog) psSetting
               _ <- liftIO $ scheduleLimited $ do
-                let l = LT.take nProof (prover psq)
+                let l = LT.take nProof (loggedProver psq)
                 m <- LT.uncons l
                 case m of
                   Nothing -> atomicModifyIORef' proofCacheRef (\m0 ->
@@ -1599,3 +1628,112 @@ getExportNodeR :: Handler TypedContent
 getExportNodeR = do
   addHeader "Content-Type" "text/plain"
   sendResponse (TypedContent "text/plain" (toContent ("Not implemented yet" :: TS.Text)))
+
+-- =====================================================================
+-- Search Log Visualization handlers
+-- =====================================================================
+
+getSearchLogR :: Handler Html
+getSearchLogR = do
+  -- If no log exists yet, run a fresh logged proof search using current PSQ
+  sl <- liftIO ensureSearchLog
+  events <- liftIO $ SL.getEvents sl
+  mpsq <- liftIO $ readIORef currentPSQPosRef
+  let tree = SL.buildSearchTree events
+      totalEvents = length events
+      maxDepth = if null events then 0 else maximum (map SL.evDepth events)
+      queryText = case mpsq of
+        Just psq -> T.toStrict (toText psq)
+        Nothing  -> "No query"
+  defaultLayout $ do
+    addScriptRemote "https://d3js.org/d3.v7.min.js"
+    [whamlet|
+      <div .sl-container>
+        <div .sl-header>
+          <div .sl-header-title>Proof Search Visualization
+          <div .sl-header-info>
+            <span .sl-badge>Events: #{show totalEvents}
+            <span .sl-badge>Max Depth: #{show maxDepth}
+          <div .sl-header-ctl>
+            <a .btn .btn-back href=@{ProofSearchR}>Back to Proof Search
+        <div .sl-query-bar>
+          <span .sl-query-label>Query:
+          <span .sl-query-text>#{queryText}
+        <div .sl-grid>
+          <div .sl-panel .sl-panel-tree>
+            <div .sl-panel-header>Search Tree
+            <div #search-tree-container .sl-panel-body>
+          <div .sl-panel .sl-panel-stats>
+            <div .sl-panel-header>Rule Statistics
+            <div #rule-stats-container .sl-panel-body>
+          <div .sl-panel .sl-panel-flame>
+            <div .sl-panel-header>Flame Graph
+            <div #flame-graph-container .sl-panel-body>
+          <div .sl-panel .sl-panel-failures>
+            <div .sl-panel-header>Failure Analysis
+            <div #failure-analysis-container .sl-panel-body>
+    |]
+    toWidget $(cassiusFile "src/Interface/Express/templates/searchlog.cassius")
+    toWidget $(juliusFile "src/Interface/Express/templates/searchlog.julius")
+-- | Ensure a SearchLog exists. If not, run a logged proof search.
+ensureSearchLog :: IO SL.SearchLog
+ensureSearchLog = do
+  mLog <- readIORef currentSearchLogRef
+  case mLog of
+    Just existing -> do
+      evs <- SL.getEvents existing
+      if not (null evs) then return existing else createSearchLog
+    Nothing -> createSearchLog
+  where
+    createSearchLog = do
+      mpsq <- readIORef currentPSQPosRef
+      case mpsq of
+        Nothing -> do
+          sl <- SL.newSearchLog
+          atomicWriteIORef currentSearchLogRef (Just sl)
+          return sl
+        Just psq -> do
+          sl <- SL.newSearchLog
+          atomicWriteIORef currentSearchLogRef (Just sl)
+          psSetting <- readIORef currentProofSearchSettingRef
+          let loggedProver = WaniProve.prove'WithLog (Just sl) psSetting
+          results <- LT.toList (LT.take 3 (loggedProver psq))
+          return sl
+
+getSearchLogTreeR :: Handler Value
+getSearchLogTreeR = do
+  sl <- liftIO ensureSearchLog
+  events <- liftIO $ SL.getEvents sl
+  let tree = SL.buildSearchTree events
+      totalEvents = length events
+      maxDepth = if null events then 0 else maximum (map SL.evDepth events)
+  return $ object
+    [ "roots" .= tree
+    , "totalEvents" .= totalEvents
+    , "maxDepth" .= maxDepth
+    ]
+
+getSearchLogStatsR :: Handler Value
+getSearchLogStatsR = do
+  sl <- liftIO ensureSearchLog
+  events <- liftIO $ SL.getEvents sl
+  let stats = SL.computeRuleStats events
+      failures = SL.analyzeFailures events
+  return $ object
+    [ "rules" .= stats
+    , "failures" .= failures
+    ]
+
+getSearchLogFlameR :: Handler Value
+getSearchLogFlameR = do
+  sl <- liftIO ensureSearchLog
+  events <- liftIO $ SL.getEvents sl
+  let tree = SL.buildSearchTree events
+      flame = SL.buildFlameGraph tree
+  return $ toJSON flame
+
+getSearchLogEventsR :: Handler Value
+getSearchLogEventsR = do
+  sl <- liftIO ensureSearchLog
+  events <- liftIO $ SL.getEvents sl
+  return $ object ["events" .= events]

@@ -25,6 +25,8 @@ module DTS.Prover.Wani.WaniBase (
     -- ** Debug functions
     debugLogWithTerm,
     debugLog,
+    -- ** Search log (re-export)
+    module DTS.Prover.Wani.SearchLog,
     -- ** Backward Inference Term
     Goal(..),
     conFromGoal,
@@ -55,9 +57,10 @@ import qualified DTS.DTTdeBruijn as DdB  -- UDTT
 import qualified DTS.Prover.Wani.Arrowterm as A
 import qualified Interface.Tree as UDT
 import qualified DTS.QueryTypes as QT
+import DTS.Prover.Wani.SearchLog
 
-import qualified Data.Text.Lazy as T 
-import qualified Data.List as L 
+import qualified Data.Text.Lazy as T
+import qualified Data.List as L
 import qualified Data.Maybe as M
 import qualified Debug.Trace as D
 
@@ -80,7 +83,7 @@ data Status = Status
    allProof :: Bool -- ^ In the bottom of the tree, one proof is enough to judge whether the hypo is true or not.
   }deriving (Show,Eq)
 
-data Setting = Setting 
+data Setting = Setting
   {mode :: ProofMode,
    falsum :: Bool,
    maxdepth :: Depth,
@@ -92,7 +95,9 @@ data Setting = Setting
    oracle :: Maybe (DdB.ConName -> DdB.ConName -> Float),
    oracleThreshold :: Float,
    enableEq :: Bool,
-   enableConcurrent :: Bool
+   enableConcurrent :: Bool,
+   searchLog :: Maybe SearchLog,
+   searchLogRuleName :: Maybe T.Text
    } -- deriving (Show,Eq)
 
 data Result = Result
@@ -112,7 +117,7 @@ statusDef :: Status
 statusDef = Status{failedlst=[],usedMaxDepth = 0,deduceNgLst=[],usedDisJoint=[],allProof = True}
 
 settingDef :: Setting
-settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False}
+settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False,searchLog=Nothing,searchLogRuleName=Nothing}
 
 resultDef :: Result
 resultDef = Result{trees = [],errMsg = "",rStatus = statusDef}
