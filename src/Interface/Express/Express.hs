@@ -1041,6 +1041,9 @@ getProofSearchR = do
   liftIO $ atomicWriteIORef currentPSNegRef []
   liftIO $ atomicWriteIORef currentPSDonePosRef False
   liftIO $ atomicWriteIORef currentPSDoneNegRef False
+  -- Reset the search log as well: PSQ is changing, so any previously captured
+  -- events belong to a different query and must not be shown for the new one.
+  liftIO $ atomicWriteIORef currentSearchLogRef Nothing
   case (mDisc, mProver) of
     (Just discourse, Just prover) -> do
       -- Build signature and context from selections
@@ -1675,14 +1678,15 @@ getSearchLogR = do
     |]
     toWidget $(cassiusFile "src/Interface/Express/templates/searchlog.cassius")
     toWidget $(juliusFile "src/Interface/Express/templates/searchlog.julius")
--- | Ensure a SearchLog exists. If not, run a logged proof search.
+-- | Ensure a SearchLog exists.
+-- If a log has already been associated with the current proof search
+-- (whether populated or still in progress), return it as-is.
+-- Only create and run a new logged search if no log has ever been set.
 ensureSearchLog :: IO SL.SearchLog
 ensureSearchLog = do
   mLog <- readIORef currentSearchLogRef
   case mLog of
-    Just existing -> do
-      evs <- SL.getEvents existing
-      if not (null evs) then return existing else createSearchLog
+    Just existing -> return existing
     Nothing -> createSearchLog
   where
     createSearchLog = do
@@ -1697,7 +1701,7 @@ ensureSearchLog = do
           atomicWriteIORef currentSearchLogRef (Just sl)
           psSetting <- readIORef currentProofSearchSettingRef
           let loggedProver = WaniProve.prove'WithLog (Just sl) psSetting
-          results <- LT.toList (LT.take 3 (loggedProver psq))
+          _ <- LT.toList (LT.take 3 (loggedProver psq))
           return sl
 
 getSearchLogTreeR :: Handler Value
