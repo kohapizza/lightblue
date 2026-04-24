@@ -85,8 +85,8 @@ newSearchLog = do
 recordEvent :: Maybe SearchLog -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> IO Int
 recordEvent Nothing _ _ _ _ _ = return (-1)
 recordEvent (Just sl) kind depth goalStr ruleName message = do
-  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   ts <- Time.getCurrentTime
+  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   let ev = SearchEvent
         { evId = eid
         , evKind = kind
@@ -104,8 +104,8 @@ recordEvent (Just sl) kind depth goalStr ruleName message = do
 recordEventForGoal :: Maybe SearchLog -> Int -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> IO ()
 recordEventForGoal Nothing _ _ _ _ _ _ = return ()
 recordEventForGoal (Just sl) goalStartId kind depth goalStr ruleName message = do
-  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   ts <- Time.getCurrentTime
+  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   let ev = SearchEvent
         { evId = eid
         , evKind = kind
@@ -122,8 +122,8 @@ recordEventForGoal (Just sl) goalStartId kind depth goalStr ruleName message = d
 recordGoalEnd :: Maybe SearchLog -> Int -> Int -> T.Text -> T.Text -> IO ()
 recordGoalEnd Nothing _ _ _ _ = return ()
 recordGoalEnd (Just sl) goalStartId depth goalStr message = do
-  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   ts <- Time.getCurrentTime
+  eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   let ev = SearchEvent
         { evId = eid
         , evKind = EvGoalEnd
