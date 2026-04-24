@@ -28,6 +28,14 @@
     tooltip.style("display", "none");
   }
 
+  // Variable-precision ms formatter:
+  //   < 0.1ms  -> 2 decimals (e.g. "0.04ms")
+  //   >= 0.1ms -> 1 decimal  (e.g. "0.3ms", "7.4ms")
+  function formatMs(v) {
+    if (v == null) return "N/A";
+    return (v < 0.1 ? v.toFixed(2) : v.toFixed(1)) + "ms";
+  }
+
   // =====================================================================
   // 1. Search Tree (D3 tree layout)
   // =====================================================================
@@ -171,7 +179,7 @@
             var childCount = (d.children ? d.children.length : 0) + (d._children ? d._children.length : 0);
             if (childCount > 0) label += " [" + childCount + "]";
             var dur = d.data.durationMs;
-            if (dur != null) label += " " + dur.toFixed(1) + "ms";
+            if (dur != null) label += " " + formatMs(dur);
             return label;
           })
           .style("font-size", "11px");
@@ -290,7 +298,7 @@
           tr.append("td").text(r.successes);
           tr.append("td").text(r.failures);
           tr.append("td").text((r.rate * 100).toFixed(1) + "%");
-          tr.append("td").text(r.totalMs.toFixed(1));
+          tr.append("td").text(r.totalMs < 0.1 ? r.totalMs.toFixed(2) : r.totalMs.toFixed(1));
           var barTd = tr.append("td");
           var barWidth = Math.max(2, (r.totalMs / maxTotal) * 80);
           var successWidth = r.attempts > 0 ? barWidth * (r.successes / r.attempts) : 0;
