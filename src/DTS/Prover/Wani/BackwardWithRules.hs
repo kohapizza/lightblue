@@ -27,6 +27,7 @@ import qualified Data.Time.Clock as Time
 
 import Control.Concurrent
 import Control.Concurrent.Async
+import qualified Control.Exception as E
 import Data.IORef
 import qualified Data.List as L
 
@@ -361,7 +362,7 @@ deduce' goal depth setting =
                         let resultDef =
                                 WB.resultDef{WB.rStatus = WB.mergeStatus (WB.sStatus setting) (WB.statusDef{WB.usedMaxDepth = depth,WB.deduceNgLst = ((sig,var),arrowType) : (WB.deduceNgLst $WB.sStatus setting),WB.failedlst = maybe (WB.failedlst $WB.sStatus setting) (\arrowTerm -> (((sig,var),arrowTerm,arrowType) : (WB.failedlst $WB.sStatus setting))) justTerm})}
                         in subgoalsetsIO >>= \subgoalsets -> deduceWithSubGoalsets subgoalsets (depth+1) setting resultDef justTerm arrowType
-                in resultIO >>= \result ->
+                in (resultIO >>= \result ->
                   if null (WB.trees result)
                     then
                       logForGoal EvDeduceFailed depth goalStr Nothing "deduce failed" >>
@@ -370,7 +371,8 @@ deduce' goal depth setting =
                     else
                       logForGoal EvDeduced depth goalStr Nothing (T.pack $ "deduced " ++ show (length (WB.trees result)) ++ " trees") >>
                       endGoal "success" >>
-                      return ((if depth < WB.debug setting then D.trace (L.replicate (2*depth) ' ' ++  show depth ++ " deduced:  " ++ show (map A.downSide' (WB.trees result))) else id) result)
+                      return ((if depth < WB.debug setting then D.trace (L.replicate (2*depth) ' ' ++  show depth ++ " deduced:  " ++ show (map A.downSide' (WB.trees result))) else id) result))
+                    `E.onException` endGoal "exception"
   where
     goalStr = case goal of
       WB.Goal sig var maybeTerm proofTypes ->
