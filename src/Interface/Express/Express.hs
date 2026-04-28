@@ -326,6 +326,7 @@ mkYesod "App" [parseRoutes|
 /searchlog/stats SearchLogStatsR GET
 /searchlog/flame SearchLogFlameR GET
 /searchlog/events SearchLogEventsR GET
+/demo/switch DemoSwitchR GET
 /error ErrorR GET
 /shutdown ShutdownR GET
 |]
@@ -549,10 +550,35 @@ showExpressInference ps _prover _signtr _contxt sentences = do
         build baseSig baseCtx 0
   return ()
 
+  -- Load a pre-baked demo PSQ from a file, if requested by the Docker
+  -- demo image. When DEMO_PSQ_1 (or legacy DEMO_PSQ) points to a valid
+  -- Store-encoded ProofSearchQuery (the format produced by
+  -- /proofsearch/query/bin), the proof-search query is populated
+  -- up-front so a visitor can land directly on /searchlog without
+  -- walking through /inference. Additional demo problems can be
+  -- mounted as DEMO_PSQ_2, DEMO_PSQ_3, ... and switched at runtime
+  -- via /demo/switch?n=N.
+  mDemoPsq <- do
+    p1 <- lookupEnv "DEMO_PSQ_1"
+    case p1 of
+      Just _  -> return p1
+      Nothing -> lookupEnv "DEMO_PSQ"
+  case mDemoPsq of
+    Just psqPath -> do
+      bs <- BS.readFile psqPath
+      case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
+        Right psq -> do
+          atomicWriteIORef currentPSQPosRef (Just psq)
+          putStrLn $ "Loaded demo PSQ from " ++ psqPath
+        Left err -> hPutStrLn stderr $
+          "Failed to decode demo PSQ from " ++ psqPath ++ ": " ++ show err
+    Nothing -> return ()
+
   let port = 3000
   mStart <- lookupEnv "LB_EXPRESS_START"
   let startPath = case mStart of
                     Just s | map toLower s == "inference" -> "/inference"
+                    Just s | map toLower s == "searchlog" -> "/searchlog"
                     _ -> "/error"
   let url = "http://localhost:" ++ show port ++ startPath
 
@@ -1648,6 +1674,20 @@ getSearchLogR = do
       queryText = case mpsq of
         Just psq -> T.toStrict (toText psq)
         Nothing  -> "No query"
+  -- Discover any pre-baked demo PSQ slots (DEMO_PSQ_N + DEMO_PSQ_N_LABEL)
+  -- so a visitor on the live demo can switch between examples without
+  -- leaving /searchlog.
+  let collectSlots :: Int -> IO [(Int, String)]
+      collectSlots n = do
+        mp <- lookupEnv ("DEMO_PSQ_" ++ show n)
+        case mp of
+          Nothing -> return []
+          Just _  -> do
+            mlbl <- lookupEnv ("DEMO_PSQ_" ++ show n ++ "_LABEL")
+            let label = maybe ("Demo " ++ show n) id mlbl
+            rest <- collectSlots (n + 1)
+            return ((n, label) : rest)
+  demoSlots <- liftIO $ collectSlots 1
   defaultLayout $ do
     addScriptRemote "https://d3js.org/d3.v7.min.js"
     [whamlet|
@@ -1658,6 +1698,8 @@ getSearchLogR = do
             <span .sl-badge>Events: #{show totalEvents}
             <span .sl-badge>Max Depth: #{show maxDepth}
           <div .sl-header-ctl>
+            $forall (n, lbl) <- demoSlots
+              <a .btn href=@{DemoSwitchR}?n=#{show n}>#{lbl}
             <a .btn .btn-back href=@{ProofSearchR}>Back to Proof Search
         <div .sl-query-bar>
           <span .sl-query-label>Query:
@@ -1741,3 +1783,24 @@ getSearchLogEventsR = do
   sl <- liftIO ensureSearchLog
   events <- liftIO $ SL.getEvents sl
   return $ object ["events" .= events]
+
+-- | Switch the active demo PSQ. Reads DEMO_PSQ_<n> from the
+-- environment, decodes it as a ProofSearchQuery, replaces
+-- currentPSQPosRef, clears currentSearchLogRef so /searchlog will
+-- regenerate fresh events, and redirects to /searchlog.
+getDemoSwitchR :: Handler Html
+getDemoSwitchR = do
+  mN <- lookupGetParam "n"
+  let nStr = maybe "1" TS.unpack mN
+      envName = "DEMO_PSQ_" ++ nStr
+  mPath <- liftIO $ lookupEnv envName
+  case mPath of
+    Nothing -> defaultLayout [whamlet|<div .error-message>Demo slot #{nStr} is not configured (env #{envName} unset).|]
+    Just path -> do
+      bs <- liftIO $ BS.readFile path
+      case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
+        Left err -> defaultLayout [whamlet|<div .error-message>Failed to decode #{path}: #{show err}|]
+        Right psq -> do
+          liftIO $ atomicWriteIORef currentPSQPosRef (Just psq)
+          liftIO $ atomicWriteIORef currentSearchLogRef Nothing
+          redirect SearchLogR
