@@ -12,6 +12,7 @@ module DTS.Prover.Wani.SearchLog (
   SearchLog(..),
   newSearchLog,
   recordEvent,
+  recordEventWithIdx,
   recordEventForGoal,
   recordGoalEnd,
   getEvents,
@@ -66,6 +67,7 @@ data SearchEvent = SearchEvent
   , evRuleName  :: !(Maybe T.Text)
   , evMessage   :: !T.Text
   , evGoalId    :: !Int           -- ^ unique ID of the deduce' call (= GoalStart evId)
+  , evSubgoalIndex :: !(Maybe Int) -- ^ for GoalStart: index within parent SubGoalSet
   } deriving (Show)
 
 -- | Handle for recording proof search events (IORef-based, thread-safe)
@@ -83,8 +85,13 @@ newSearchLog = do
 
 -- | Record an event. Returns the event ID. No-op if the SearchLog is Nothing.
 recordEvent :: Maybe SearchLog -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> IO Int
-recordEvent Nothing _ _ _ _ _ = return (-1)
-recordEvent (Just sl) kind depth goalStr ruleName message = do
+recordEvent mLog kind depth goalStr ruleName message =
+  recordEventWithIdx mLog kind depth goalStr ruleName message Nothing
+
+-- | Record an event with subgoalIndex (for GoalStart). Returns the event ID.
+recordEventWithIdx :: Maybe SearchLog -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> Maybe Int -> IO Int
+recordEventWithIdx Nothing _ _ _ _ _ _ = return (-1)
+recordEventWithIdx (Just sl) kind depth goalStr ruleName message mIdx = do
   ts <- Time.getCurrentTime
   eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   let ev = SearchEvent
@@ -96,6 +103,7 @@ recordEvent (Just sl) kind depth goalStr ruleName message = do
         , evRuleName = ruleName
         , evMessage = message
         , evGoalId = eid  -- for GoalStart, goalId = own id
+        , evSubgoalIndex = mIdx
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
   return eid
@@ -115,6 +123,7 @@ recordEventForGoal (Just sl) goalStartId kind depth goalStr ruleName message = d
         , evRuleName = ruleName
         , evMessage = message
         , evGoalId = goalStartId
+        , evSubgoalIndex = Nothing
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
 
@@ -133,6 +142,7 @@ recordGoalEnd (Just sl) goalStartId depth goalStr message = do
         , evRuleName = Nothing
         , evMessage = message
         , evGoalId = goalStartId  -- references the matching GoalStart
+        , evSubgoalIndex = Nothing
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
 
@@ -173,6 +183,7 @@ data SearchTreeNode = SearchTreeNode
   , stnMessage    :: !T.Text
   , stnRuleTrials :: ![RuleTrial]  -- ^ rules tried in order (reject/accept)
   , stnSubgoalSetId :: !Int        -- ^ ID of the EvRuleAttempt that spawned this node (siblings with same ID are AND)
+  , stnSubgoalIndex :: !(Maybe Int) -- ^ index within parent SubGoalSet (0-based)
   } deriving (Show)
 
 -- | Build search tree from flat event list.
@@ -236,6 +247,7 @@ buildSearchTree events =
              , stnMessage = evMessage startEv
              , stnRuleTrials = trials
              , stnSubgoalSetId = ssId
+             , stnSubgoalIndex = evSubgoalIndex startEv
              }
       roots = filter (\e -> Map.notMember (evId e) parentMap) goalStarts
   in map buildNode roots
@@ -288,11 +300,15 @@ determineOutcome evts
 
 -- | Rule statistics
 data RuleStats = RuleStats
-  { rsRule      :: !T.Text
-  , rsAttempts  :: !Int
-  , rsSuccesses :: !Int
-  , rsFailures  :: !Int
-  , rsTotalMs   :: !Double
+  { rsRule           :: !T.Text
+  , rsAttempts       :: !Int
+  , rsSuccesses      :: !Int
+  , rsFailures       :: !Int
+  , rsDepthExceeded  :: !Int
+  , rsLoopAvoided    :: !Int
+  , rsTimeLimitHit   :: !Int
+  , rsPending        :: !Int
+  , rsTotalMs        :: !Double
   } deriving (Show)
 
 -- | Compute rule statistics from tree nodes (consistent counting)
@@ -302,12 +318,18 @@ computeRuleStats events =
       allNodes = concatMap flattenTree treeNodes
       -- Group all nodes by rule name
       ruleGroups = Map.fromListWith (++) [(r, [n]) | n <- allNodes, Just r <- [stnRule n]]
+      countOutcome o ns = length $ filter (\n -> stnOutcome n == o) ns
   in map (\(rule, nodes) ->
       let attempts = length nodes
-          successes = length $ filter (\n -> stnOutcome n == OutcomeSuccess) nodes
-          failures = length $ filter (\n -> stnOutcome n == OutcomeFail) nodes
           totalMs = sum [maybe 0 id (stnDurationMs n) | n <- nodes]
-      in RuleStats rule attempts successes failures totalMs
+      in RuleStats rule attempts
+                   (countOutcome OutcomeSuccess nodes)
+                   (countOutcome OutcomeFail nodes)
+                   (countOutcome OutcomeDepthExceeded nodes)
+                   (countOutcome OutcomeLoopAvoided nodes)
+                   (countOutcome OutcomeTimeLimitHit nodes)
+                   (countOutcome OutcomePending nodes)
+                   totalMs
     ) (Map.toList ruleGroups)
 
 -- | Flatten tree to list of all nodes
@@ -421,6 +443,7 @@ instance ToJSON SearchTreeNode where
     , "message"    .= stnMessage n
     , "ruleTrials" .= stnRuleTrials n
     , "subgoalSetId" .= stnSubgoalSetId n
+    , "subgoalIndex" .= stnSubgoalIndex n
     ]
 
 instance ToJSON RuleTrial where
@@ -432,13 +455,17 @@ instance ToJSON RuleTrial where
 
 instance ToJSON RuleStats where
   toJSON s = object
-    [ "rule"      .= rsRule s
-    , "attempts"  .= rsAttempts s
-    , "successes" .= rsSuccesses s
-    , "failures"  .= rsFailures s
-    , "totalMs"   .= rsTotalMs s
-    , "avgMs"     .= if rsAttempts s > 0 then rsTotalMs s / fromIntegral (rsAttempts s) else (0 :: Double)
-    , "rate"      .= if rsAttempts s > 0 then fromIntegral (rsSuccesses s) / fromIntegral (rsAttempts s) :: Double else (0 :: Double)
+    [ "rule"           .= rsRule s
+    , "attempts"       .= rsAttempts s
+    , "successes"      .= rsSuccesses s
+    , "failures"       .= rsFailures s
+    , "depthExceeded"  .= rsDepthExceeded s
+    , "loopAvoided"    .= rsLoopAvoided s
+    , "timeLimitHit"   .= rsTimeLimitHit s
+    , "pending"        .= rsPending s
+    , "totalMs"        .= rsTotalMs s
+    , "avgMs"          .= if rsAttempts s > 0 then rsTotalMs s / fromIntegral (rsAttempts s) else (0 :: Double)
+    , "rate"           .= if rsAttempts s > 0 then fromIntegral (rsSuccesses s) / fromIntegral (rsAttempts s) :: Double else (0 :: Double)
     ]
 
 instance ToJSON FailureInfo where

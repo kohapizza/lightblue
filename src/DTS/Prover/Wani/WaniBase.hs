@@ -97,7 +97,8 @@ data Setting = Setting
    enableEq :: Bool,
    enableConcurrent :: Bool,
    searchLog :: Maybe SearchLog,
-   searchLogRuleName :: Maybe T.Text
+   searchLogRuleName :: Maybe T.Text,
+   searchLogSubgoalIndex :: Maybe Int  -- ^ index of subgoal within SubGoalSet (0-based)
    } -- deriving (Show,Eq)
 
 data Result = Result
@@ -117,7 +118,7 @@ statusDef :: Status
 statusDef = Status{failedlst=[],usedMaxDepth = 0,deduceNgLst=[],usedDisJoint=[],allProof = True}
 
 settingDef :: Setting
-settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False,searchLog=Nothing,searchLogRuleName=Nothing}
+settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False,searchLog=Nothing,searchLogRuleName=Nothing,searchLogSubgoalIndex=Nothing}
 
 resultDef :: Result
 resultDef = Result{trees = [],errMsg = "",rStatus = statusDef}

@@ -137,8 +137,18 @@
               var sameSet = allSiblings.filter(function(s) { return s.subgoalSetId === d.data.subgoalSetId; });
               var totalSets = [];
               allSiblings.forEach(function(s) { if (s.subgoalSetId >= 0 && totalSets.indexOf(s.subgoalSetId) < 0) totalSets.push(s.subgoalSetId); });
-              if (sameSet.length > 1) {
-                andOrHtml = "<div class='sl-tooltip-detail' style='color:#68d391'>AND: " + sameSet.length + " subgoals in this SubGoalSet (all must succeed)</div>";
+              // Number of distinct subgoal indices (AND members)
+              var indices = [];
+              sameSet.forEach(function(s) { if (s.subgoalIndex != null && indices.indexOf(s.subgoalIndex) < 0) indices.push(s.subgoalIndex); });
+              if (indices.length > 1) {
+                andOrHtml = "<div class='sl-tooltip-detail' style='color:#68d391'>AND: " + indices.length + " subgoals in this SubGoalSet (all must succeed in some branch)</div>";
+              }
+              // Branch info for this subgoal index
+              if (d.data.subgoalIndex != null) {
+                var sameIdxNodes = sameSet.filter(function(s) { return s.subgoalIndex === d.data.subgoalIndex; });
+                if (sameIdxNodes.length > 1) {
+                  andOrHtml += "<div class='sl-tooltip-detail' style='color:#fbbf24'>BRANCH: subgoal " + (d.data.subgoalIndex + 1) + " explored in " + sameIdxNodes.length + " branches (one branch success suffices)</div>";
+                }
               }
               if (totalSets.length > 1) {
                 andOrHtml += "<div class='sl-tooltip-detail' style='color:#90cdf4'>OR: " + totalSets.length + " SubGoalSets tried (one success suffices)</div>";
@@ -167,13 +177,24 @@
           .attr("text-anchor", function(d) { return d.children || d._children ? "end" : "start"; })
           .text(function(d) {
             var label = d.data.rule || (d.parent ? "goal" : "root");
-            // Show subgoal index within SubGoalSet (AND group)
-            if (d.parent && d.data.subgoalSetId >= 0) {
+            // Show subgoal index within SubGoalSet (AND group), with branch number
+            if (d.parent && d.data.subgoalSetId >= 0 && d.data.subgoalIndex != null) {
               var allSiblings = (d.parent.data.children || []);
               var sameSet = allSiblings.filter(function(s) { return s.subgoalSetId === d.data.subgoalSetId; });
-              if (sameSet.length > 1) {
-                var idx = sameSet.findIndex(function(s) { return s.id === d.data.id; }) + 1;
-                label += " (" + idx + "/" + sameSet.length + ")";
+              // Total subgoal indices in this SubGoalSet
+              var indices = [];
+              sameSet.forEach(function(s) { if (s.subgoalIndex != null && indices.indexOf(s.subgoalIndex) < 0) indices.push(s.subgoalIndex); });
+              var totalSubgoals = indices.length;
+              // Branch number among siblings with same subgoalIndex
+              var sameIdxNodes = sameSet.filter(function(s) { return s.subgoalIndex === d.data.subgoalIndex; });
+              var branchNum = sameIdxNodes.findIndex(function(s) { return s.id === d.data.id; }) + 1;
+              if (totalSubgoals > 1 || sameIdxNodes.length > 1) {
+                var displayIdx = d.data.subgoalIndex + 1;
+                label += " (" + displayIdx + "/" + totalSubgoals;
+                if (sameIdxNodes.length > 1) {
+                  label += " #" + branchNum;
+                }
+                label += ")";
               }
             }
             var childCount = (d.children ? d.children.length : 0) + (d._children ? d._children.length : 0);
@@ -269,6 +290,10 @@
         { key: "attempts", label: "Attempts" },
         { key: "successes", label: "Success" },
         { key: "failures", label: "Fail" },
+        { key: "depthExceeded", label: "Depth" },
+        { key: "loopAvoided", label: "Loop" },
+        { key: "timeLimitHit", label: "Time" },
+        { key: "pending", label: "Pending" },
         { key: "rate", label: "Rate" },
         { key: "totalMs", label: "Total (ms)" },
         { key: "bar", label: "" }
@@ -297,6 +322,10 @@
           tr.append("td").text(r.attempts);
           tr.append("td").text(r.successes);
           tr.append("td").text(r.failures);
+          tr.append("td").text(r.depthExceeded);
+          tr.append("td").text(r.loopAvoided);
+          tr.append("td").text(r.timeLimitHit);
+          tr.append("td").text(r.pending);
           tr.append("td").text((r.rate * 100).toFixed(1) + "%");
           tr.append("td").text(r.totalMs < 0.1 ? r.totalMs.toFixed(2) : r.totalMs.toFixed(1));
           var barTd = tr.append("td");

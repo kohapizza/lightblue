@@ -16,7 +16,7 @@ import Interface.Text (SimpleText(..))
 import qualified DTS.Prover.Wani.WaniBase as WB
 import qualified DTS.Prover.Wani.Forward as F
 import qualified DTS.Prover.Wani.SearchLog as SL
-import DTS.Prover.Wani.SearchLog (SearchEventKind(..), recordEvent, recordEventForGoal, recordGoalEnd)
+import DTS.Prover.Wani.SearchLog (SearchEventKind(..), recordEvent, recordEventWithIdx, recordEventForGoal, recordGoalEnd)
 
 import qualified Data.Text.Lazy as T
 import qualified Data.List as L
@@ -190,16 +190,17 @@ deduceWithSubGoalset :: WB.SubGoalSet -> WB.Depth -> WB.Setting -> WB.Result -> 
 deduceWithSubGoalset (WB.SubGoalSet rule maybeTree subgoals dSide) depth setting resultDef =
     --deduceWithAntecedentsAndSubGoal :: Subgoal -> [WB.Result] -> IO [[WB.Result]]
     let mLog = WB.searchLog setting
-        deduceWithAntecedentsAndSubGoal subgoal results=
+        deduceWithAntecedentsAndSubGoal idxedSubgoal results=
+            let (subgoalIdx, subgoal) = idxedSubgoal in
             case subgoalToGoalWithAntecedents results subgoal depth setting of
                 M.Just goal ->
                     let disjUsed = if rule /= QT.DisjE then [] else (maybe [] (\tree -> [A.typefromAJudgment $ A.downSide' tree]) maybeTree)
-                        setting' = setting{WB.sStatus = (WB.sStatus setting){WB.usedDisJoint = disjUsed++(WB.usedDisJoint$WB.sStatus setting)}, WB.searchLogRuleName = Just (T.pack $ show rule)}
+                        setting' = setting{WB.sStatus = (WB.sStatus setting){WB.usedDisJoint = disjUsed++(WB.usedDisJoint$WB.sStatus setting)}, WB.searchLogRuleName = Just (T.pack $ show rule), WB.searchLogSubgoalIndex = Just subgoalIdx}
                     in
                     deduce' goal depth setting' >>= \newResult -> return (map (\tree -> (newResult{WB.trees = [tree]}):results) (L.nub $ WB.trees newResult))
                 M.Nothing -> return []
-        -- deduceWithAntecedentsetAndSubGoal :: IO [[WB.Result]] -> Subgoal -> IO [[WB.Result]]
-        deduceWithAntecedentsetAndSubGoal resultsetIOs subgoal = resultsetIOs >>= \resultset -> foldMap (deduceWithAntecedentsAndSubGoal subgoal) resultset
+        -- deduceWithAntecedentsetAndSubGoal :: IO [[WB.Result]] -> (Int, Subgoal) -> IO [[WB.Result]]
+        deduceWithAntecedentsetAndSubGoal resultsetIOs idxedSubgoal = resultsetIOs >>= \resultset -> foldMap (deduceWithAntecedentsAndSubGoal idxedSubgoal) resultset
         resultsetIO =
             recordEvent mLog EvRuleAttempt depth (T.pack $ show subgoals) (Just $ T.pack $ show rule) (T.concat ["with ", T.pack (show rule)]) >>
             -- Record forwardedTree recursively (for Membership/Var/PiElim that resolve via forward reasoning)
@@ -207,7 +208,7 @@ deduceWithSubGoalset (WB.SubGoalSet rule maybeTree subgoals dSide) depth setting
               M.Just fwdTree -> recordForwardedTree mLog depth fwdTree
               M.Nothing -> return ()) >>
             (if depth < WB.debug setting then (D.trace (L.replicate (2*depth) ' ' ++ "with " ++ (show rule) ++ ", want to prove "  ++ (show subgoals)) ) else id)
-            (foldl deduceWithAntecedentsetAndSubGoal (return [[resultDef]]) subgoals >>= \resultset' -> return (map (reverse . init) resultset'))
+            (foldl deduceWithAntecedentsetAndSubGoal (return [[resultDef]]) (zip [0..] subgoals) >>= \resultset' -> return (map (reverse . init) resultset'))
     in
       resultsetIO >>= \resultset -> return $ constructResultWithResultsets rule maybeTree resultset dSide setting resultDef
 
@@ -298,7 +299,7 @@ deduceWithSubGoalsetsConcurrent subgoalsets depth setting resultDef justTerm arr
 deduce':: WB.Goal -> WB.Depth -> WB.Setting -> IO WB.Result
 deduce' goal depth setting =
   let mLog = WB.searchLog setting
-  in recordEvent mLog EvGoalStart depth goalStr (WB.searchLogRuleName setting) "current goal" >>= \gid ->
+  in recordEventWithIdx mLog EvGoalStart depth goalStr (WB.searchLogRuleName setting) "current goal" (WB.searchLogSubgoalIndex setting) >>= \gid ->
   let endGoal msg = recordGoalEnd mLog gid depth goalStr msg
       logForGoal = recordEventForGoal mLog gid
   in
