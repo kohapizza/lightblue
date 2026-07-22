@@ -17,6 +17,12 @@ extra-deps:
 
 allow-newer: true
 
+# Newer clang (Xcode 15+) treats int-conversion in GHC-generated FFI stubs
+# as an error, which breaks the hexpat build on macOS. Downgrade it back to
+# a warning (no effect on Linux/gcc builds).
+ghc-options:
+  hexpat: -optc-Wno-int-conversion -optc-Wno-error=int-conversion
+
 build:
   haddock: false
   haddock-arguments:
