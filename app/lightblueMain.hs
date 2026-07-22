@@ -377,6 +377,12 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
             QT.maxTime = Just maxTime
             }
       case style of
+        -- Express の証明探索可視化は wani を前提とする（pos 側はログ付き
+        -- wani を直接呼ぶため、他の prover を指定されると pos/neg で
+        -- 異なる prover が走ってしまう）
+        I.EXPRESS | proverName /= NLI.Wani ->
+          S.hPutStrLn S.stderr $
+            "Express (-s express) requires the Wani prover: rerun with --prover Wani (got " ++ show proverName ++ ")"
         I.EXPRESS -> do
           case parsedJSeM'' of
             [] -> do
@@ -390,7 +396,13 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
               Env.setEnv "LB_EXPRESS_NOSHOWCAT" (if noShowCat then "1" else "0")
               Env.setEnv "LB_EXPRESS_NOSHOWSEM" (if noShowSem then "1" else "0")
               Env.setEnv "LB_EXPRESS_LEAFVERTICAL" (if leafVertical then "1" else "0")
-              Env.setEnv "LB_EXPRESS_START" "inference"
+              -- LB_EXPRESS_START は既に設定されていれば尊重する
+              -- （Dockerfile.demo が searchlog を指定して直接可視化ページに
+              -- 着地させるため）。未設定なら inference から開始。
+              mStartEnv <- Env.lookupEnv "LB_EXPRESS_START"
+              case mStartEnv of
+                Just "searchlog" -> return ()
+                _ -> Env.setEnv "LB_EXPRESS_START" "inference"
               -- Browser selection for Express
               case mExpressBrowser of
                 Just BrowserChrome  -> Env.setEnv "LB_EXPRESS_BROWSER" "chrome"

@@ -13,6 +13,7 @@ module DTS.Prover.Wani.SearchLog (
   newSearchLog,
   recordEvent,
   recordEventWithIdx,
+  recordGoalStart,
   recordEventForGoal,
   recordGoalEnd,
   getEvents,
@@ -68,6 +69,8 @@ data SearchEvent = SearchEvent
   , evMessage   :: !T.Text
   , evGoalId    :: !Int           -- ^ unique ID of the deduce' call (= GoalStart evId)
   , evSubgoalIndex :: !(Maybe Int) -- ^ for GoalStart: index within parent SubGoalSet
+  , evParentGoalId :: !(Maybe Int) -- ^ for GoalStart: goalId of the parent deduce' call
+  , evSubgoalSetId :: !(Maybe Int) -- ^ for GoalStart: evId of the EvRuleAttempt that spawned it
   } deriving (Show)
 
 -- | Handle for recording proof search events (IORef-based, thread-safe)
@@ -90,8 +93,15 @@ recordEvent mLog kind depth goalStr ruleName message =
 
 -- | Record an event with subgoalIndex (for GoalStart). Returns the event ID.
 recordEventWithIdx :: Maybe SearchLog -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> Maybe Int -> IO Int
-recordEventWithIdx Nothing _ _ _ _ _ _ = return (-1)
-recordEventWithIdx (Just sl) kind depth goalStr ruleName message mIdx = do
+recordEventWithIdx mLog kind depth goalStr ruleName message mIdx =
+  recordGoalStart mLog kind depth goalStr ruleName message mIdx Nothing Nothing
+
+-- | Record a GoalStart event with its explicit parent goalId and the
+-- EvRuleAttempt (SubGoalSet) that spawned it, so the search tree can be
+-- reconstructed exactly instead of via depth heuristics. Returns the event ID.
+recordGoalStart :: Maybe SearchLog -> SearchEventKind -> Int -> T.Text -> Maybe T.Text -> T.Text -> Maybe Int -> Maybe Int -> Maybe Int -> IO Int
+recordGoalStart Nothing _ _ _ _ _ _ _ _ = return (-1)
+recordGoalStart (Just sl) kind depth goalStr ruleName message mIdx mParent mSubgoalSet = do
   ts <- Time.getCurrentTime
   eid <- atomicModifyIORef' (slCounter sl) (\n -> (n + 1, n))
   let ev = SearchEvent
@@ -104,6 +114,8 @@ recordEventWithIdx (Just sl) kind depth goalStr ruleName message mIdx = do
         , evMessage = message
         , evGoalId = eid  -- for GoalStart, goalId = own id
         , evSubgoalIndex = mIdx
+        , evParentGoalId = mParent
+        , evSubgoalSetId = mSubgoalSet
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
   return eid
@@ -124,6 +136,8 @@ recordEventForGoal (Just sl) goalStartId kind depth goalStr ruleName message = d
         , evMessage = message
         , evGoalId = goalStartId
         , evSubgoalIndex = Nothing
+        , evParentGoalId = Nothing
+        , evSubgoalSetId = Nothing
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
 
@@ -143,6 +157,8 @@ recordGoalEnd (Just sl) goalStartId depth goalStr message = do
         , evMessage = message
         , evGoalId = goalStartId  -- references the matching GoalStart
         , evSubgoalIndex = Nothing
+        , evParentGoalId = Nothing
+        , evSubgoalSetId = Nothing
         }
   atomicModifyIORef' (slEvents sl) (\s -> (s |> ev, ()))
 
@@ -187,7 +203,9 @@ data SearchTreeNode = SearchTreeNode
   } deriving (Show)
 
 -- | Build search tree from flat event list.
--- Uses goalId for GoalStart/GoalEnd matching, depth for parent-child relationships.
+-- Uses goalId for GoalStart/GoalEnd matching and the explicitly recorded
+-- parentGoalId / subgoalSetId for structure, so the reconstruction is exact
+-- and does not depend on sequential (depth-monotone) event ordering.
 buildSearchTree :: [SearchEvent] -> [SearchTreeNode]
 buildSearchTree events =
   let goalStarts = filter (\e -> evKind e == EvGoalStart) events
@@ -198,42 +216,31 @@ buildSearchTree events =
       outcomeKinds = [EvDeduced, EvDeduceFailed, EvDepthExceeded, EvAvoidLoop, EvTimeLimit, EvSpecialCase]
       outcomeMap :: Map.Map Int [SearchEvent]
       outcomeMap = Map.fromListWith (++) [(evGoalId e, [e]) | e <- events, evKind e `elem` outcomeKinds]
-      -- Parent-child by depth tracking with goalId-based GoalEnd
-      parentMap :: Map.Map Int Int
-      parentMap = buildParentMap goalStarts
+      -- Parent-child from the explicitly recorded parent goalId
       childrenMap :: Map.Map Int [SearchEvent]
       childrenMap = Map.fromListWith (++)
-        [(pid, [e]) | e <- goalStarts, Just pid <- [Map.lookup (evId e) parentMap]]
-      -- Rule trial events (reject/accept) for each goal
-      -- These are at the same depth as the GoalStart, between GoalStart and GoalEnd
-      ruleTrialEvents = filter (\e -> evKind e `elem` [EvRuleReject, EvRuleAccept]) events
-      -- SubGoalSet ID: for each GoalStart, find the most recent EvRuleAttempt at the same depth
-      -- GoalStarts after the same EvRuleAttempt are AND-related (same SubGoalSet)
-      -- GoalStarts after different EvRuleAttempts are OR-related (different SubGoalSets)
-      subgoalSetMap :: Map.Map Int Int  -- goalStartId -> ruleAttempt evId
-      subgoalSetMap = buildSubgoalSetMap events
+        [(pid, [e]) | e <- goalStarts, Just pid <- [evParentGoalId e]]
+      -- Rule trial events (reject/accept), attached to their goal via goalId
+      trialMap :: Map.Map Int [SearchEvent]
+      trialMap = Map.fromListWith (++)
+        [(evGoalId e, [e]) | e <- events, evKind e `elem` [EvRuleReject, EvRuleAccept]]
       -- Build node
       buildNode :: SearchEvent -> SearchTreeNode
       buildNode startEv =
         let gid = evId startEv
             mEndEv = Map.lookup gid endMap
-            endId = maybe maxBound evId mEndEv
             children = map buildNode $ L.sortOn evId $ maybe [] id (Map.lookup gid childrenMap)
             outcomes = maybe [] id (Map.lookup gid outcomeMap)
             outcome = determineOutcome outcomes
             duration = case mEndEv of
               Just endEv' -> Just $ realToFrac (Time.diffUTCTime (evTimestamp endEv') (evTimestamp startEv)) * 1000
               Nothing    -> Nothing
-            -- Collect rule trials for this goal (same depth, between start and end)
             trials = [RuleTrial
                         (maybe "?" id (evRuleName e))
                         (if evKind e == EvRuleAccept then "accept" else "reject")
                         (evMessage e)
-                     | e <- ruleTrialEvents
-                     , evDepth e == evDepth startEv
-                     , evId e > gid
-                     , evId e < endId]
-            ssId = maybe (-1) id (Map.lookup gid subgoalSetMap)
+                     | e <- L.sortOn evId (maybe [] id (Map.lookup gid trialMap))]
+            ssId = maybe (-1) id (evSubgoalSetId startEv)
         in SearchTreeNode
              { stnId = gid
              , stnGoal = evGoalStr startEv
@@ -249,44 +256,8 @@ buildSearchTree events =
              , stnSubgoalSetId = ssId
              , stnSubgoalIndex = evSubgoalIndex startEv
              }
-      roots = filter (\e -> Map.notMember (evId e) parentMap) goalStarts
+      roots = filter (\e -> evParentGoalId e == Nothing) goalStarts
   in map buildNode roots
-
--- | For each GoalStart, find the most recent EvRuleAttempt at the same depth.
--- GoalStarts sharing the same EvRuleAttempt are AND-related (same SubGoalSet).
--- Forward reasoning nodes (message = "forward") are excluded from grouping.
-buildSubgoalSetMap :: [SearchEvent] -> Map.Map Int Int
-buildSubgoalSetMap events =
-  let sorted = L.sortOn evId events
-      go :: Map.Map Int Int -> Map.Map Int Int -> [SearchEvent] -> Map.Map Int Int
-      go _lastAttempt result [] = result
-      go lastAttempt result (e:es)
-        | evKind e == EvRuleAttempt =
-            let lastAttempt' = Map.insert (evDepth e) (evId e) lastAttempt
-            in go lastAttempt' result es
-        | evKind e == EvGoalStart && evMessage e /= "forward" =
-            let mAttemptId = Map.lookup (evDepth e) lastAttempt
-                result' = case mAttemptId of
-                  Just aid -> Map.insert (evId e) aid result
-                  Nothing  -> result
-            in go lastAttempt result' es
-        | otherwise = go lastAttempt result es
-  in go Map.empty Map.empty sorted
-
--- | Determine parent GoalStart for each GoalStart based on depth.
-buildParentMap :: [SearchEvent] -> Map.Map Int Int
-buildParentMap goalStarts =
-  let go :: Map.Map Int Int -> Map.Map Int Int -> [SearchEvent] -> Map.Map Int Int
-      go _depthStack result [] = result
-      go depthStack result (e:es) =
-        let d = evDepth e
-            parentId = Map.lookup (d - 1) depthStack
-            result' = case parentId of
-              Just pid -> Map.insert (evId e) pid result
-              Nothing  -> result
-            depthStack' = Map.insert d (evId e) depthStack
-        in go depthStack' result' es
-  in go Map.empty Map.empty goalStarts
 
 -- | Determine outcome from outcome events for a specific goal
 determineOutcome :: [SearchEvent] -> SearchOutcome
@@ -311,11 +282,11 @@ data RuleStats = RuleStats
   , rsTotalMs        :: !Double
   } deriving (Show)
 
--- | Compute rule statistics from tree nodes (consistent counting)
-computeRuleStats :: [SearchEvent] -> [RuleStats]
-computeRuleStats events =
-  let treeNodes = buildSearchTree events
-      allNodes = concatMap flattenTree treeNodes
+-- | Compute rule statistics from an already-built search tree
+-- (consistent counting, no duplicate tree reconstruction)
+computeRuleStats :: [SearchTreeNode] -> [RuleStats]
+computeRuleStats treeNodes =
+  let allNodes = concatMap flattenTree treeNodes
       -- Group all nodes by rule name
       ruleGroups = Map.fromListWith (++) [(r, [n]) | n <- allNodes, Just r <- [stnRule n]]
       countOutcome o ns = length $ filter (\n -> stnOutcome n == o) ns
@@ -427,6 +398,8 @@ instance ToJSON SearchEvent where
     , "rule"      .= evRuleName e
     , "message"   .= evMessage e
     , "goalId"    .= evGoalId e
+    , "parentGoalId" .= evParentGoalId e
+    , "subgoalSetId" .= evSubgoalSetId e
     ]
 
 instance ToJSON SearchTreeNode where

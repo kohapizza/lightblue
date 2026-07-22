@@ -98,7 +98,9 @@ data Setting = Setting
    enableConcurrent :: Bool,
    searchLog :: Maybe SearchLog,
    searchLogRuleName :: Maybe T.Text,
-   searchLogSubgoalIndex :: Maybe Int  -- ^ index of subgoal within SubGoalSet (0-based)
+   searchLogSubgoalIndex :: Maybe Int,  -- ^ index of subgoal within SubGoalSet (0-based)
+   searchLogParentGoalId :: Maybe Int,  -- ^ goalId (GoalStart evId) of the parent deduce' call
+   searchLogSubgoalSetId :: Maybe Int   -- ^ evId of the EvRuleAttempt that spawned this goal
    } -- deriving (Show,Eq)
 
 data Result = Result
@@ -118,7 +120,7 @@ statusDef :: Status
 statusDef = Status{failedlst=[],usedMaxDepth = 0,deduceNgLst=[],usedDisJoint=[],allProof = True}
 
 settingDef :: Setting
-settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False,searchLog=Nothing,searchLogRuleName=Nothing,searchLogSubgoalIndex=Nothing}
+settingDef = Setting{mode = Plain,falsum = True,maxdepth = 9,maxtime = 100000,debug = 0,sStatus = statusDef,ruleConHojo = "sub",oracle=M.Nothing,oracleThreshold=0.5,enableEq=True,enableConcurrent=False,searchLog=Nothing,searchLogRuleName=Nothing,searchLogSubgoalIndex=Nothing,searchLogParentGoalId=Nothing,searchLogSubgoalSetId=Nothing}
 
 resultDef :: Result
 resultDef = Result{trees = [],errMsg = "",rStatus = statusDef}

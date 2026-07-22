@@ -16,7 +16,7 @@ import Interface.Text (SimpleText(..))
 import qualified DTS.Prover.Wani.WaniBase as WB
 import qualified DTS.Prover.Wani.Forward as F
 import qualified DTS.Prover.Wani.SearchLog as SL
-import DTS.Prover.Wani.SearchLog (SearchEventKind(..), recordEvent, recordEventWithIdx, recordEventForGoal, recordGoalEnd)
+import DTS.Prover.Wani.SearchLog (SearchEventKind(..), recordEvent, recordGoalStart, recordEventForGoal, recordGoalEnd)
 
 import qualified Data.Text.Lazy as T
 import qualified Data.List as L
@@ -38,15 +38,16 @@ debugLog (WB.Goal sig var maybeTerm proofTypes) depth setting =
 -- | Record a forwarded proof tree recursively as search events.
 -- This captures the internal structure of proofs built by forward reasoning
 -- (Membership, Var, PiElim) so they appear in the search tree visualization.
-recordForwardedTree :: Maybe SL.SearchLog -> WB.Depth -> UDT.Tree QT.DTTrule A.AJudgment -> IO ()
-recordForwardedTree mLog depth tree =
+-- The parent goalId is recorded explicitly for exact tree reconstruction.
+recordForwardedTree :: Maybe SL.SearchLog -> Maybe Int -> WB.Depth -> UDT.Tree QT.DTTrule A.AJudgment -> IO ()
+recordForwardedTree mLog mParent depth tree =
   let judgment = UDT.node tree
       goalStr = toText (A.a2dtJudgment judgment)
       ruleName = T.pack $ show (UDT.ruleName tree)
       children = UDT.daughters tree
   in do
-    gid <- recordEvent mLog EvGoalStart depth goalStr (Just ruleName) "forward"
-    mapM_ (recordForwardedTree mLog (depth + 1)) children
+    gid <- recordGoalStart mLog EvGoalStart depth goalStr (Just ruleName) "forward" Nothing mParent Nothing
+    mapM_ (recordForwardedTree mLog (if gid < 0 then Nothing else Just gid) (depth + 1)) children
     recordEventForGoal mLog gid EvDeduced depth goalStr (Just ruleName) "forward proof"
     recordGoalEnd mLog gid depth goalStr "success"
 
@@ -58,8 +59,8 @@ sortSubGoalSets = id
 
 -- | ruleResultToSubGoalsets
 -- | summary : Extract available subgoalsets and prepare debug output
-ruleResultToSubGoalsets :: WB.Depth -> Bool -> Maybe SL.SearchLog -> IO [([WB.SubGoalSet],T.Text)] -> IO [WB.SubGoalSet]
-ruleResultToSubGoalsets depth debugEnabled mLog ruleResultsIO = ruleResultsIO >>= \ruleResults ->
+ruleResultToSubGoalsets :: WB.Depth -> Bool -> Maybe SL.SearchLog -> Int -> IO [([WB.SubGoalSet],T.Text)] -> IO [WB.SubGoalSet]
+ruleResultToSubGoalsets depth debugEnabled mLog gid ruleResultsIO = ruleResultsIO >>= \ruleResults ->
   let
     (nullsubgoalsets,notNullSubGoalsets) = L.partition (null .fst ) ruleResults
     f = concatMap fst
@@ -72,12 +73,13 @@ ruleResultToSubGoalsets depth debugEnabled mLog ruleResultsIO = ruleResultsIO >>
             else f
         )
         notNullSubGoalsets
-    -- Record rule reject/accept events for visualization
+    -- Record rule reject/accept events for visualization, attached to the
+    -- goal (deduce' call) they belong to via its GoalStart id.
     recordRuleResults = do
       mapM_ (\(_,msg) -> if T.null msg then return () else
         let ruleName = extractRuleName msg
-        in recordEvent mLog EvRuleReject depth "" ruleName msg >> return ()) nullsubgoalsets
-      mapM_ (\(sets,_) -> mapM_ (\(WB.SubGoalSet rule _ _ _) -> recordEvent mLog EvRuleAccept depth "" (Just $ T.pack $ show rule) (T.concat ["accepted: ", T.pack $ show rule]) >> return ()) sets) notNullSubGoalsets
+        in recordEventForGoal mLog gid EvRuleReject depth "" ruleName msg) nullsubgoalsets
+      mapM_ (\(sets,_) -> mapM_ (\(WB.SubGoalSet rule _ _ _) -> recordEventForGoal mLog gid EvRuleAccept depth "" (Just $ T.pack $ show rule) (T.concat ["accepted: ", T.pack $ show rule])) sets) notNullSubGoalsets
     extractRuleName msg =
       case T.breakOn " in " msg of
         (_, rest) | not (T.null rest) -> Just (T.strip $ T.drop 4 rest)
@@ -190,22 +192,22 @@ deduceWithSubGoalset :: WB.SubGoalSet -> WB.Depth -> WB.Setting -> WB.Result -> 
 deduceWithSubGoalset (WB.SubGoalSet rule maybeTree subgoals dSide) depth setting resultDef =
     --deduceWithAntecedentsAndSubGoal :: Subgoal -> [WB.Result] -> IO [[WB.Result]]
     let mLog = WB.searchLog setting
-        deduceWithAntecedentsAndSubGoal idxedSubgoal results=
+    in recordEvent mLog EvRuleAttempt depth (T.pack $ show subgoals) (Just $ T.pack $ show rule) (T.concat ["with ", T.pack (show rule)]) >>= \attemptId ->
+    let deduceWithAntecedentsAndSubGoal idxedSubgoal results=
             let (subgoalIdx, subgoal) = idxedSubgoal in
             case subgoalToGoalWithAntecedents results subgoal depth setting of
                 M.Just goal ->
                     let disjUsed = if rule /= QT.DisjE then [] else (maybe [] (\tree -> [A.typefromAJudgment $ A.downSide' tree]) maybeTree)
-                        setting' = setting{WB.sStatus = (WB.sStatus setting){WB.usedDisJoint = disjUsed++(WB.usedDisJoint$WB.sStatus setting)}, WB.searchLogRuleName = Just (T.pack $ show rule), WB.searchLogSubgoalIndex = Just subgoalIdx}
+                        setting' = setting{WB.sStatus = (WB.sStatus setting){WB.usedDisJoint = disjUsed++(WB.usedDisJoint$WB.sStatus setting)}, WB.searchLogRuleName = Just (T.pack $ show rule), WB.searchLogSubgoalIndex = Just subgoalIdx, WB.searchLogSubgoalSetId = if attemptId < 0 then Nothing else Just attemptId}
                     in
                     deduce' goal depth setting' >>= \newResult -> return (map (\tree -> (newResult{WB.trees = [tree]}):results) (L.nub $ WB.trees newResult))
                 M.Nothing -> return []
         -- deduceWithAntecedentsetAndSubGoal :: IO [[WB.Result]] -> (Int, Subgoal) -> IO [[WB.Result]]
         deduceWithAntecedentsetAndSubGoal resultsetIOs idxedSubgoal = resultsetIOs >>= \resultset -> foldMap (deduceWithAntecedentsAndSubGoal idxedSubgoal) resultset
         resultsetIO =
-            recordEvent mLog EvRuleAttempt depth (T.pack $ show subgoals) (Just $ T.pack $ show rule) (T.concat ["with ", T.pack (show rule)]) >>
             -- Record forwardedTree recursively (for Membership/Var/PiElim that resolve via forward reasoning)
             (case maybeTree of
-              M.Just fwdTree -> recordForwardedTree mLog depth fwdTree
+              M.Just fwdTree -> recordForwardedTree mLog (WB.searchLogParentGoalId setting) depth fwdTree
               M.Nothing -> return ()) >>
             (if depth < WB.debug setting then (D.trace (L.replicate (2*depth) ' ' ++ "with " ++ (show rule) ++ ", want to prove "  ++ (show subgoals)) ) else id)
             (foldl deduceWithAntecedentsetAndSubGoal (return [[resultDef]]) (zip [0..] subgoals) >>= \resultset' -> return (map (reverse . init) resultset'))
@@ -299,7 +301,7 @@ deduceWithSubGoalsetsConcurrent subgoalsets depth setting resultDef justTerm arr
 deduce':: WB.Goal -> WB.Depth -> WB.Setting -> IO WB.Result
 deduce' goal depth setting =
   let mLog = WB.searchLog setting
-  in recordEventWithIdx mLog EvGoalStart depth goalStr (WB.searchLogRuleName setting) "current goal" (WB.searchLogSubgoalIndex setting) >>= \gid ->
+  in recordGoalStart mLog EvGoalStart depth goalStr (WB.searchLogRuleName setting) "current goal" (WB.searchLogSubgoalIndex setting) (WB.searchLogParentGoalId setting) (WB.searchLogSubgoalSetId setting) >>= \gid ->
   let endGoal msg = recordGoalEnd mLog gid depth goalStr msg
       logForGoal = recordEventForGoal mLog gid
   in
@@ -351,7 +353,7 @@ deduce' goal depth setting =
                 endGoal "fail" >>
                 return (WB.debugLogWithTerm (sig,var) (A.Conclusion DdB.Kind) arrowType depth setting "kind cannot be a term."  WB.resultDef{WB.rStatus = WB.mergeStatus (WB.sStatus setting) WB.statusDef{WB.usedMaxDepth = depth}})
               _ ->
-                let subgoalsetsIO = sortSubGoalSets $ (ruleResultToSubGoalsets depth (depth < WB.debug setting) mLog) $ sequence $
+                let subgoalsetsIO = sortSubGoalSets $ (ruleResultToSubGoalsets depth (depth < WB.debug setting) mLog gid) $ sequence $
                       map
                         (\ruleLabel -> BR.rule ruleLabel goal setting)
                         ([BR.PiForm]
@@ -362,7 +364,9 @@ deduce' goal depth setting =
                     resultIO =
                         let resultDef =
                                 WB.resultDef{WB.rStatus = WB.mergeStatus (WB.sStatus setting) (WB.statusDef{WB.usedMaxDepth = depth,WB.deduceNgLst = ((sig,var),arrowType) : (WB.deduceNgLst $WB.sStatus setting),WB.failedlst = maybe (WB.failedlst $WB.sStatus setting) (\arrowTerm -> (((sig,var),arrowTerm,arrowType) : (WB.failedlst $WB.sStatus setting))) justTerm})}
-                        in subgoalsetsIO >>= \subgoalsets -> deduceWithSubGoalsets subgoalsets (depth+1) setting resultDef justTerm arrowType
+                        in subgoalsetsIO >>= \subgoalsets ->
+                             -- Pass this goal's id down so child GoalStarts record their parent explicitly
+                             deduceWithSubGoalsets subgoalsets (depth+1) setting{WB.searchLogParentGoalId = if gid < 0 then M.Nothing else M.Just gid} resultDef justTerm arrowType
                 in (resultIO >>= \result ->
                   if null (WB.trees result)
                     then

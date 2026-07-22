@@ -265,6 +265,13 @@ currentPSDoneNegRef = unsafePerformIO $ newIORef False
 currentSearchLogRef :: IORef (Maybe SL.SearchLog)
 currentSearchLogRef = unsafePerformIO $ newIORef Nothing
 
+-- | Store.encode of the PSQ the current search log belongs to.
+-- Used to decide whether the log can be kept across /proofsearch reloads
+-- (same PSQ) or must be discarded (PSQ changed).
+{-# NOINLINE currentSearchLogKeyRef #-}
+currentSearchLogKeyRef :: IORef (Maybe BS.ByteString)
+currentSearchLogKeyRef = unsafePerformIO $ newIORef Nothing
+
 -- ProofSearchSetting used by the CLI (for logged search)
 {-# NOINLINE currentProofSearchSettingRef #-}
 currentProofSearchSettingRef :: IORef QT.ProofSearchSetting
@@ -565,13 +572,16 @@ showExpressInference ps _prover _signtr _contxt sentences = do
       Nothing -> lookupEnv "DEMO_PSQ"
   case mDemoPsq of
     Just psqPath -> do
-      bs <- BS.readFile psqPath
-      case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
-        Right psq -> do
-          atomicWriteIORef currentPSQPosRef (Just psq)
-          putStrLn $ "Loaded demo PSQ from " ++ psqPath
+      ebs <- try (BS.readFile psqPath)
+      case ebs of
         Left err -> hPutStrLn stderr $
-          "Failed to decode demo PSQ from " ++ psqPath ++ ": " ++ show err
+          "Failed to read demo PSQ from " ++ psqPath ++ ": " ++ show (err :: IOException)
+        Right bs -> case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
+          Right psq -> do
+            atomicWriteIORef currentPSQPosRef (Just psq)
+            putStrLn $ "Loaded demo PSQ from " ++ psqPath
+          Left err -> hPutStrLn stderr $
+            "Failed to decode demo PSQ from " ++ psqPath ++ ": " ++ show err
     Nothing -> return ()
 
   let port = 3000
@@ -1067,9 +1077,11 @@ getProofSearchR = do
   liftIO $ atomicWriteIORef currentPSNegRef []
   liftIO $ atomicWriteIORef currentPSDonePosRef False
   liftIO $ atomicWriteIORef currentPSDoneNegRef False
-  -- Reset the search log as well: PSQ is changing, so any previously captured
-  -- events belong to a different query and must not be shown for the new one.
-  liftIO $ atomicWriteIORef currentSearchLogRef Nothing
+  -- NOTE: the search log is NOT reset here. It is reset below only when the
+  -- newly built PSQ differs from the one the log belongs to
+  -- (currentSearchLogKeyRef); keeping it across reloads of the same query
+  -- avoids re-running an already-cached proof search just to repopulate
+  -- /searchlog.
   case (mDisc, mProver) of
     (Just discourse, Just prover) -> do
       -- Build signature and context from selections
@@ -1113,6 +1125,12 @@ getProofSearchR = do
           -- Check cache and seed current results if present
           let keyPos = Store.encode psqPos
               keyNeg = Store.encode psqNeg
+          -- Reset the search log only when the PSQ actually changed: events
+          -- captured for a different query must not be shown for this one.
+          mLogKey <- liftIO $ readIORef currentSearchLogKeyRef
+          when (mLogKey /= Just keyPos) $ liftIO $ do
+            atomicWriteIORef currentSearchLogRef Nothing
+            atomicWriteIORef currentSearchLogKeyRef Nothing
           mCachedPos <- liftIO $ readIORef proofCacheRef >>= \m -> return (M.lookup keyPos m)
           mCachedNeg <- liftIO $ readIORef proofCacheRef >>= \m -> return (M.lookup keyNeg m)
           case mCachedPos of
@@ -1175,8 +1193,15 @@ getProofSearchR = do
             |]
             myDesign
             myFunction
-        else defaultLayout [whamlet|<div class="error-message">Select final diagram first|]
-    _ -> defaultLayout [whamlet|<div class="error-message">Not ready|]
+        else do
+          -- No valid PSQ: the log (if any) belongs to a query that is gone.
+          liftIO $ atomicWriteIORef currentSearchLogRef Nothing
+          liftIO $ atomicWriteIORef currentSearchLogKeyRef Nothing
+          defaultLayout [whamlet|<div class="error-message">Select final diagram first|]
+    _ -> do
+      liftIO $ atomicWriteIORef currentSearchLogRef Nothing
+      liftIO $ atomicWriteIORef currentSearchLogKeyRef Nothing
+      defaultLayout [whamlet|<div class="error-message">Not ready|]
   where
     (!!?) :: [a] -> Int -> Maybe a
     (!!?) xs n = if n < 0 || n >= length xs then Nothing else Just (xs !! n)
@@ -1338,6 +1363,7 @@ getProofStartR = do
               -- Create search log for visualization
               searchLog <- liftIO $ SL.newSearchLog
               liftIO $ atomicWriteIORef currentSearchLogRef (Just searchLog)
+              liftIO $ atomicWriteIORef currentSearchLogKeyRef (Just key)
               psSetting <- liftIO $ readIORef currentProofSearchSettingRef
               let loggedProver = WaniProve.prove'WithLog (Just searchLog) psSetting
               _ <- liftIO $ scheduleLimited $ do
@@ -1668,8 +1694,7 @@ getSearchLogR = do
   sl <- liftIO ensureSearchLog
   events <- liftIO $ SL.getEvents sl
   mpsq <- liftIO $ readIORef currentPSQPosRef
-  let tree = SL.buildSearchTree events
-      totalEvents = length events
+  let totalEvents = length events
       maxDepth = if null events then 0 else maximum (map SL.evDepth events)
       queryText = case mpsq of
         Just psq -> T.toStrict (toText psq)
@@ -1741,8 +1766,14 @@ ensureSearchLog = do
         Just psq -> do
           sl <- SL.newSearchLog
           atomicWriteIORef currentSearchLogRef (Just sl)
+          atomicWriteIORef currentSearchLogKeyRef (Just (Store.encode psq))
           psSetting <- readIORef currentProofSearchSettingRef
-          let loggedProver = WaniProve.prove'WithLog (Just sl) psSetting
+          -- This search runs synchronously inside a request handler, so make
+          -- sure it is time-bounded even when no --maxtime was configured
+          -- (defaultProofSearchSetting has maxTime = Nothing). 100000 is the
+          -- CLI default for --maxtime.
+          let psSetting' = psSetting { QT.maxTime = Just (maybe 100000 id (QT.maxTime psSetting)) }
+              loggedProver = WaniProve.prove'WithLog (Just sl) psSetting'
           _ <- LT.toList (LT.take 3 (loggedProver psq))
           return sl
 
@@ -1763,7 +1794,8 @@ getSearchLogStatsR :: Handler Value
 getSearchLogStatsR = do
   sl <- liftIO ensureSearchLog
   events <- liftIO $ SL.getEvents sl
-  let stats = SL.computeRuleStats events
+  let tree = SL.buildSearchTree events
+      stats = SL.computeRuleStats tree
       failures = SL.analyzeFailures events
   return $ object
     [ "rules" .= stats
@@ -1797,10 +1829,15 @@ getDemoSwitchR = do
   case mPath of
     Nothing -> defaultLayout [whamlet|<div .error-message>Demo slot #{nStr} is not configured (env #{envName} unset).|]
     Just path -> do
-      bs <- liftIO $ BS.readFile path
-      case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
-        Left err -> defaultLayout [whamlet|<div .error-message>Failed to decode #{path}: #{show err}|]
-        Right psq -> do
-          liftIO $ atomicWriteIORef currentPSQPosRef (Just psq)
-          liftIO $ atomicWriteIORef currentSearchLogRef Nothing
-          redirect SearchLogR
+      ebs <- liftIO $ try (BS.readFile path)
+      case ebs of
+        Left err -> do
+          let errMsg = show (err :: IOException)
+          defaultLayout [whamlet|<div .error-message>Failed to read #{path}: #{errMsg}|]
+        Right bs -> case Store.decode bs :: Either Store.PeekException DTT.ProofSearchQuery of
+          Left err -> defaultLayout [whamlet|<div .error-message>Failed to decode #{path}: #{show err}|]
+          Right psq -> do
+            liftIO $ atomicWriteIORef currentPSQPosRef (Just psq)
+            liftIO $ atomicWriteIORef currentSearchLogRef Nothing
+            liftIO $ atomicWriteIORef currentSearchLogKeyRef Nothing
+            redirect SearchLogR

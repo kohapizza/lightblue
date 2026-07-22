@@ -93,10 +93,12 @@ prove'WithLog mLog QT.ProofSearchSetting{..} (DdB.ProofSearchQuery sig ctx typ) 
         WB.oracle = oracle,
         WB.oracleThreshold=0.5,
         WB.enableEq = True,
-        WB.enableConcurrent = False,  -- disabled for search log accuracy
+        WB.enableConcurrent = M.isNothing mLog,  -- sequential execution required for search log accuracy
         WB.searchLog = mLog,
         WB.searchLogRuleName = Nothing,
-        WB.searchLogSubgoalIndex = Nothing
+        WB.searchLogSubgoalIndex = Nothing,
+        WB.searchLogParentGoalId = Nothing,
+        WB.searchLogSubgoalSetId = Nothing
         };
       ioResult = hojo ctx ((A.aEntityName,DdB.Type):sig) typ setting (M.maybe Nothing (\t -> M.Just $ toEnum (t * (10^9))) maxTime)
   in ListT.lift ioResult >>= \result ->

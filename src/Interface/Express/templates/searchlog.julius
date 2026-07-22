@@ -62,9 +62,10 @@
         return;
       }
 
-      // Use the root with the most descendants (last iterative deepening round)
-      function countNodes(n) { return 1 + (n.children || []).reduce(function(s, c) { return s + countNodes(c); }, 0); }
-      var rootData = data.roots.reduce(function(best, r) { return countNodes(r) > countNodes(best) ? r : best; }, data.roots[0]);
+      // Roots are in chronological order, one per iterative-deepening round;
+      // the last one is the final round (the successful proof, or the last
+      // failed attempt), so that is the round to display.
+      var rootData = data.roots[data.roots.length - 1];
       var root = d3.hierarchy(rootData, function(d) { return d.children; });
 
       // Collapse beyond depth 3
@@ -271,10 +272,10 @@
   // =====================================================================
   // 3. Rule Statistics Table
   // =====================================================================
-  function initRuleStats() {
+  function initRuleStats(data) {
     var container = d3.select("#rule-stats-container");
 
-    d3.json("@{SearchLogStatsR}").then(function(data) {
+    {
       if (!data.rules || data.rules.length === 0) {
         container.append("div").style("padding", "20px").style("color", "#999").text("No rule statistics");
         return;
@@ -337,16 +338,16 @@
       }
 
       renderRows();
-    });
+    }
   }
 
   // =====================================================================
   // 4. Failure Analysis
   // =====================================================================
-  function initFailureAnalysis() {
+  function initFailureAnalysis(data) {
     var container = d3.select("#failure-analysis-container");
 
-    d3.json("@{SearchLogStatsR}").then(function(data) {
+    {
       if (!data.failures || data.failures.length === 0) {
         container.append("div").style("padding", "20px").style("color", "#999").text("No failures recorded");
         return;
@@ -384,7 +385,7 @@
             .text("... and " + (items.length - 20) + " more");
         }
       });
-    });
+    }
   }
 
   // =====================================================================
@@ -392,7 +393,11 @@
   // =====================================================================
   initSearchTree();
   initFlameGraph();
-  initRuleStats();
-  initFailureAnalysis();
+  // Rule Statistics and Failure Analysis share a single fetch of the same
+  // stats endpoint instead of requesting (and recomputing) it twice.
+  d3.json("@{SearchLogStatsR}").then(function(data) {
+    initRuleStats(data);
+    initFailureAnalysis(data);
+  });
 
 })();
