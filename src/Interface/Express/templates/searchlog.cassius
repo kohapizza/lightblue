@@ -1,0 +1,306 @@
+.sl-container
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
+  padding: 0
+  margin: 0
+  background: #f5f5f5
+  min-height: 100vh
+
+.sl-header
+  background: #002b5c
+  color: #fff
+  padding: 12px 20px
+  display: flex
+  align-items: center
+  gap: 16px
+
+.sl-header-title
+  font-size: 18px
+  font-weight: 600
+
+.sl-query-bar
+  background: #1a365d
+  color: #e2e8f0
+  padding: 8px 20px
+  overflow-x: auto
+  white-space: nowrap
+  display: flex
+  align-items: center
+  gap: 8px
+
+.sl-query-label
+  color: #90cdf4
+  font-weight: 600
+  flex-shrink: 0
+
+.sl-query-text
+  color: #fff
+  overflow-x: auto
+
+.sl-query-text math
+  font-size: 16px
+  color: #fff
+
+.sl-header-info
+  display: flex
+  gap: 8px
+
+.sl-header-ctl
+  margin-left: auto
+
+.sl-badge
+  background: rgba(255,255,255,0.2)
+  padding: 3px 10px
+  border-radius: 12px
+  font-size: 12px
+
+.btn-back
+  background: rgba(255,255,255,0.15)
+  color: #fff
+  padding: 5px 14px
+  border-radius: 4px
+  text-decoration: none
+  font-size: 13px
+  border: 1px solid rgba(255,255,255,0.3)
+
+.btn-back:hover
+  background: rgba(255,255,255,0.25)
+
+.btn-viz
+  background: #1565c0
+  color: #fff
+  padding: 4px 12px
+  border-radius: 4px
+  text-decoration: none
+  font-size: 12px
+  margin-right: 8px
+
+.btn-viz:hover
+  background: #1976d2
+
+.sl-grid
+  display: grid
+  grid-template-columns: 1fr 1fr
+  grid-template-rows: 1fr 1fr
+  gap: 8px
+  padding: 8px
+  height: calc(100vh - 82px)
+
+.sl-panel
+  background: #fff
+  border-radius: 6px
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1)
+  display: flex
+  flex-direction: column
+  overflow: hidden
+
+.sl-panel-header
+  background: #f8f9fa
+  padding: 8px 14px
+  font-weight: 600
+  font-size: 13px
+  color: #333
+  border-bottom: 1px solid #e0e0e0
+  flex-shrink: 0
+
+.sl-panel-body
+  flex: 1
+  overflow: auto
+  position: relative
+
+/* Search Tree */
+.sl-panel-tree
+  grid-column: 1
+  grid-row: 1
+
+.tree-node circle
+  cursor: pointer
+  stroke-width: 2px
+  stroke: #fff
+
+.tree-node text
+  font-size: 11px
+  fill: #333
+
+.tree-link
+  fill: none
+  stroke: #ccc
+  stroke-width: 1.5px
+
+.tree-node.highlighted circle
+  stroke: #ffd700
+  stroke-width: 3px
+
+/* Flame Graph */
+.sl-panel-flame
+  grid-column: 1
+  grid-row: 2
+
+.flame-cell
+  cursor: pointer
+  stroke: #fff
+  stroke-width: 0.5px
+
+.flame-cell:hover
+  stroke: #333
+  stroke-width: 1.5px
+
+.flame-label
+  font-size: 10px
+  fill: #333
+  pointer-events: none
+
+/* Rule Statistics */
+.sl-panel-stats
+  grid-column: 2
+  grid-row: 1
+
+.stats-table
+  width: 100%
+  border-collapse: collapse
+  font-size: 12px
+
+.stats-table th
+  background: #f0f0f0
+  padding: 6px 10px
+  text-align: left
+  cursor: pointer
+  user-select: none
+  border-bottom: 2px solid #ddd
+  font-weight: 600
+  white-space: nowrap
+
+.stats-table th:hover
+  background: #e0e0e0
+
+.stats-table td
+  padding: 5px 10px
+  border-bottom: 1px solid #eee
+
+.stats-table tr:hover
+  background: #f5f8ff
+
+.stats-table tr.highlighted
+  background: #e3f2fd
+
+.stats-bar
+  display: inline-block
+  height: 12px
+  border-radius: 2px
+  vertical-align: middle
+
+.stats-bar-success
+  background: #38a169
+
+.stats-bar-fail
+  background: #e53e3e
+
+/* Failure Analysis */
+.sl-panel-failures
+  grid-column: 2
+  grid-row: 2
+
+.failure-group
+  margin-bottom: 12px
+
+.failure-group-header
+  font-weight: 600
+  font-size: 12px
+  padding: 6px 14px
+  background: #f8f9fa
+  border-bottom: 1px solid #eee
+
+.failure-item
+  padding: 4px 14px
+  font-size: 11px
+  cursor: pointer
+  border-bottom: 1px solid #f0f0f0
+  display: flex
+  gap: 8px
+  align-items: center
+
+.failure-item:hover
+  background: #f5f8ff
+
+.failure-count
+  background: #e53e3e
+  color: #fff
+  padding: 1px 6px
+  border-radius: 10px
+  font-size: 10px
+  font-weight: 600
+  flex-shrink: 0
+
+.failure-goal
+  overflow: hidden
+  text-overflow: ellipsis
+  white-space: nowrap
+  color: #555
+
+.failure-depth
+  color: #999
+  font-size: 10px
+  flex-shrink: 0
+
+/* Outcome colors */
+.outcome-success
+  fill: #38a169
+
+.outcome-fail
+  fill: #e53e3e
+
+.outcome-depth_exceeded
+  fill: #dd6b20
+
+.outcome-loop_avoided
+  fill: #d69e2e
+
+.outcome-time_limit
+  fill: #a0aec0
+
+.outcome-pending
+  fill: #718096
+
+/* Tooltip */
+.sl-tooltip
+  position: absolute
+  background: rgba(0,0,0,0.85)
+  color: #fff
+  padding: 8px 12px
+  border-radius: 4px
+  font-size: 11px
+  pointer-events: none
+  z-index: 100
+  max-width: 400px
+  line-height: 1.5
+
+.sl-tooltip-label
+  font-weight: 600
+  margin-bottom: 2px
+
+.sl-tooltip-detail
+  color: #ccc
+
+.sl-tooltip-goal
+  margin-top: 4px
+  padding-top: 4px
+  border-top: 1px solid rgba(255,255,255,0.2)
+  overflow-x: auto
+  max-width: 500px
+
+.sl-tooltip-goal math
+  font-size: 13px
+  color: #fff
+
+.sl-tooltip-trials
+  margin-top: 4px
+  padding-top: 4px
+  border-top: 1px solid rgba(255,255,255,0.2)
+  font-size: 11px
+  max-height: 200px
+  overflow-y: auto
+
+.sl-trial-accept
+  color: #68d391
+
+.sl-trial-reject
+  color: #fc8181

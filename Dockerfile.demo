@@ -1,0 +1,116 @@
+# ══════════════════════════════════════════════════════════════════════
+# wani Search Log Visualisation — live demo Dockerfile
+#
+# Builds a self-contained image that, on `docker run`, serves the
+# Express + Search Log Visualisation directly at /searchlog with
+# pre-baked demo PSQs (JSeM 720 / JSeM 699). A visitor lands straight
+# on the visualisation page and can switch between PSQs from the
+# header.
+#
+# Multi-stage:
+#   Stage 1 (builder)  Ubuntu 22.04 + Stack → compile lightblue
+#   Stage 2 (runtime)  Ubuntu 22.04 + KWJA  → minimal runtime image
+#
+# Build:
+#   docker build -f Dockerfile.demo -t wani-viz-demo .
+#
+# Run:
+#   docker run -p 3000:3000 wani-viz-demo
+# ══════════════════════════════════════════════════════════════════════
+
+# ── Stage 1: Build ─────────────────────────────────────────────────────
+FROM --platform=linux/amd64 ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates git build-essential \
+    libgmp-dev zlib1g-dev libnuma-dev \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Stack
+RUN curl -sSL \
+    https://github.com/commercialhaskell/stack/releases/download/v2.15.7/stack-2.15.7-linux-x86_64.tar.gz \
+    | tar xz --wildcards --strip-components=1 -C /usr/local/bin '*/stack' \
+    && stack --version
+
+WORKDIR /lightblue
+
+# Cache Haskell dependencies (re-runs only when package.yaml/stack.yaml change)
+COPY package.yaml stack.yaml stack.yaml.lock ./
+RUN stack build --only-dependencies --no-terminal 2>&1
+
+# Build the full project (includes the wani search log viz feature)
+COPY . .
+RUN stack build --no-terminal --copy-bins --local-bin-path /out/bin 2>&1
+
+# ── Stage 2: Runtime ───────────────────────────────────────────────────
+FROM --platform=linux/amd64 ubuntu:22.04
+
+LABEL org.opencontainers.image.title="wani Search Log Visualisation Demo"
+LABEL org.opencontainers.image.description="Live demo for the profiling and visualisation tool of proof search in formal NLI (NALOMA 2026)"
+LABEL org.opencontainers.image.licenses="BSD-3-Clause"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# System runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev gcc git ca-certificates \
+    libgmp10 libnuma1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install KWJA (CPU-only PyTorch — significantly smaller than GPU build)
+RUN pip3 install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip3 install --no-cache-dir kwja
+
+# Pre-download KWJA models at build time so the container starts instantly
+RUN echo "太郎が花子を愛している。" | kwja --device cpu 2>&1
+
+# Copy compiled binary from builder stage
+COPY --from=builder /out/bin/lightblue /usr/local/bin/lightblue
+
+# Runtime files
+COPY config/  /lightblue/config/
+COPY static/  /lightblue/static/
+COPY src/Parser/Language/Japanese/Juman/config_template.yaml \
+     /lightblue/src/Parser/Language/Japanese/Juman/config.yaml
+COPY src/Parser/Language/Japanese/Juman/Juman.dic \
+     /lightblue/src/Parser/Language/Japanese/Juman/Juman.dic
+
+# JSeM dataset (a JSeM problem must be loaded for Express to start;
+# the demo PSQ overrides which proof search is actually visualised).
+RUN git clone --depth 1 https://github.com/DaisukeBekki/JSeM /data/JSeM
+
+# Pre-baked demo PSQs (Store-encoded ProofSearchQuery, captured via
+# /proofsearch/query/bin?kind=pos)
+COPY demo/jsem720-psq.bin /demo/jsem720-psq.bin
+COPY demo/jsem699-psq.bin /demo/jsem699-psq.bin
+
+WORKDIR /lightblue
+
+# LIGHTBLUE must end with "/" — fetchConfig concatenates without a separator
+ENV LIGHTBLUE=/lightblue/
+ENV YESOD_STATIC_DIR=/lightblue/static
+ENV JSEM_DATA=/data/JSeM/data/v1.0/Verbs.xml
+
+# Live demo: visitor lands directly on the visualisation page with
+# JSeM 720 pre-loaded, and can switch to JSeM 699 from the header.
+ENV LB_EXPRESS_START=searchlog
+ENV DEMO_PSQ_1=/demo/jsem720-psq.bin
+ENV DEMO_PSQ_1_LABEL="JSeM 720 (indirect passive)"
+ENV DEMO_PSQ_2=/demo/jsem699-psq.bin
+ENV DEMO_PSQ_2_LABEL="JSeM 699 (distributive predication)"
+
+EXPOSE 3000
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+# A JSeM problem must be specified to start Express; the actual proof
+# being visualised comes from DEMO_PSQ_1 / DEMO_PSQ_2.
+CMD ["--jsemid", "720"]

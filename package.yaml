@@ -120,6 +120,7 @@ library:
   - DTS.Prover.Wani.BackwardWithRules
   - DTS.Prover.Wani.Arrowterm
   - DTS.Prover.Wani.Prove
+  - DTS.Prover.Wani.SearchLog
 
 executables:
   lightblue:
