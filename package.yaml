@@ -121,6 +121,7 @@ library:
   - DTS.Prover.Wani.BackwardWithRules
   - DTS.Prover.Wani.Arrowterm
   - DTS.Prover.Wani.Prove
+  - GF.ToDTS
 
 executables:
   lightblue:
