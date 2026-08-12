@@ -7,6 +7,7 @@ Stability   : experimental
 Translation from GF abstract syntax trees (@PGF.Expr@) into UDTT pretermes.
 
 @
+  PN                      Entity
   N, CN, VP, Comp         Entity -> type
   NP                      (Entity -> type) -> type
   Det, Quant              (Entity -> type) -> (Entity -> type) -> type
@@ -71,6 +72,7 @@ structural = M.fromList [
   -- noun phrases
   , ("UseN", lam p $ var p)                                      -- N -> CN
   , ("DetCN", lam d $ lam p $ app (var d) (var p))               -- Det -> CN -> NP
+  , ("UsePN", lam x $ lam p $ app (var p) (var x))               -- PN -> NP
   , ("DetQuant", lam q $ lam n $ var q)                          -- Quant -> Num -> Det
   , ("IndefArt", lam p $ lam q $                                 -- Quant
       UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
@@ -95,16 +97,19 @@ structural = M.fromList [
 -- @entity -> entity -> type@.
 signatureOf :: [PGF.Expr] -> DTT.Signature
 signatureOf exprs = M.toList $ M.fromList
-  [ (T.pack stem, nPlacePred arity)
+  [ (T.pack stem, typ)
   | name <- concatMap names exprs
   , (stem, tag) <- maybe [] (:[]) (splitTag name)
-  , arity <- maybe [] (:[]) (lookup tag arities) ]
+  , typ <- maybe [] (:[]) (lookup tag types) ]
   where
     names expr = case PGF.unApp expr of
                    Just (fun, args) -> PGF.showCId fun : concatMap names args
                    Nothing -> []
-    arities = [("N", 1), ("A", 1), ("V", 1), ("Adv", 1)
-              ,("N2", 2), ("A2", 2), ("V2", 2), ("V3", 3), ("PN", 0)]
+    types = [("PN", DTT.Entity)                     -- a proper name denotes an entity
+            ,("N", nPlacePred 1), ("A", nPlacePred 1)
+            ,("V", nPlacePred 1), ("Adv", nPlacePred 1)
+            ,("N2", nPlacePred 2), ("A2", nPlacePred 2), ("V2", nPlacePred 2)
+            ,("V3", nPlacePred 3)]
     nPlacePred k = iterate (DTT.Pi DTT.Entity) DTT.Type !! k
 
 -- | Splits @win_V2@ into the stem and the category tag.
