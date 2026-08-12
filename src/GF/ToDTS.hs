@@ -6,18 +6,6 @@ Stability   : experimental
 
 Translation from GF abstract syntax trees (@PGF.Expr@) into UDTT pretermes.
 
-Every abstract function of the GF grammar is interpreted as a closed UDTT
-preterm, and the application of a function to its arguments is interpreted as
-the application of the pretermes.  The translation of a tree is therefore the
-homomorphic extension of the interpretation of the functions, which is beta
-reduced at the end.
-
-The target of the translation is an /underspecified/ preterm, i.e. anaphora
-and presuppositions are left as @Asp@ (the \@ operator) and their resolution
-is delegated to the theorem prover wani.
-
-The interpretation of the categories is as follows.
-
 @
   N, CN, A, VP, RCl, RS   Entity -> type
   NP                      (Entity -> type) -> type
@@ -30,8 +18,7 @@ The interpretation of the categories is as follows.
   Num, Pol, Temp, RP      ignored
 @
 
-The fragment currently covers the abstract functions of FraCaS problems 001
-and 049.
+The fragment currently covers the abstract functions of FraCaS problems 001 and 049.
 -}
 
 module GF.ToDTS (
