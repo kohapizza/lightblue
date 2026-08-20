@@ -57,12 +57,13 @@ translate expr = case PGF.unApp expr of
 
 -- | The interpretation of an abstract function, if the fragment covers it.
 interpret :: PGF.CId -> Maybe U.Preterm
-interpret cid = case M.lookup name structural of
-  Just meaning -> Just $ UwN.toDeBruijn [] meaning
-  Nothing -> lexical name
-  where name = PGF.showCId cid
+interpret cid = case M.lookup name structural of -- structural を引く
+  Just meaning -> Just $ UwN.toDeBruijn [] meaning -- 当たれば de Bruijn に変換して返す
+  Nothing -> lexical name -- 外れれば lexical に回す
+  where name = PGF.showCId cid -- PGF.CId を showCId で String にする("DetCN")
 
 -- | The interpretation of the structural functions of the grammar.
+-- | Todo: データセットで使われている関数に対応する
 structural :: M.Map String UwN.Preterm
 structural = M.fromList [
   -- phrases and clauses
@@ -91,9 +92,8 @@ structural = M.fromList [
   , ("Present", UwN.Unit)
   ]
 
--- | The signature of the constants which the translation of the given trees
--- introduces.  The arity of a content word is read off its category tag, so
--- that a two place verb such as @win_V2@ is given the type
+-- | The signature of the constants which the translation of the given trees introduces.
+-- | The arity of a content word is read off its category tag, so that a two place verb such as @win_V2@ is given the type
 -- @entity -> entity -> type@.
 signatureOf :: [PGF.Expr] -> DTT.Signature
 signatureOf exprs = M.toList $ M.fromList
@@ -118,8 +118,7 @@ splitTag name = case break (== '_') (reverse name) of
   (revTag, '_':revStem) -> Just (reverse revStem, reverse revTag)
   _ -> Nothing
 
--- | Content words are interpreted as constants of the same name.  Function
--- words are excluded, since they call for an interpretation of their own.
+-- | Content words are interpreted as constants of the same name.  Function words are excluded, since they call for an interpretation of their own.
 lexical :: String -> Maybe U.Preterm
 lexical name = case splitTag name of
   Just (stem, tag) | tag `elem` contentTags -> Just $ U.Con $ T.pack stem
