@@ -122,6 +122,8 @@ library:
   - DTS.Prover.Wani.Arrowterm
   - DTS.Prover.Wani.Prove
   - GF.ToDTS
+  - GF.TreebankLoader
+  - GF.Inference
 
 executables:
   lightblue:
