@@ -17,11 +17,12 @@ read from paths given by the caller:
 module GF.TreebankLoader (
   -- * Problems
   Answer(..)
+  , Gold(..)
   , Problem(..)
   -- * Loading
   , loadFraCaS
   , loadTrees
-  , loadAnswers
+  , loadGold
   -- * Sections
   , sectionOf
   ) where
@@ -34,11 +35,18 @@ import Data.List (sortOn)
 import Data.Maybe (mapMaybe)
 import qualified PGF
 import qualified Text.XML as X
-import Text.XML.Cursor (($//), (&|), attribute, element, fromDocument)
+import Text.XML.Cursor (($//), ($/), (&|), attribute, content, element, fromDocument)
 
 -- | The gold answer of a FraCaS problem.  @Undef@ marks the problems whose
 -- answer the FraCaS report itself leaves open.
 data Answer = Yes | No | Unknown | Undef deriving (Eq, Show)
+
+-- | What @fracas.xml@ records about a problem, besides its trees.
+data Gold = Gold {
+  goldAnswer :: Maybe Answer
+  , premiseTexts :: [T.Text]       -- ^ The premises as the test suite words them
+  , hypothesisText :: Maybe T.Text
+  }
 
 -- | A FraCaS problem, with its sentences given as GF abstract syntax trees.
 -- Four problems have no question, and one has no hypothesis.
@@ -49,6 +57,7 @@ data Problem = Problem {
   , question :: Maybe PGF.Expr
   , hypothesis :: Maybe PGF.Expr
   , answer :: Maybe Answer
+  , gold :: Maybe Gold            -- ^ The entry of @fracas.xml@, if there is one
   }
 
 -- | Loads the treebank and the gold answers, and pairs them up by problem id.
@@ -57,8 +66,8 @@ loadFraCaS :: FilePath          -- ^ Path of @FraCaSBankI.gf@
               -> IO [Problem]
 loadFraCaS treebankPath xmlPath = do
   trees <- loadTrees treebankPath
-  answers <- loadAnswers xmlPath
-  return $ assemble trees answers
+  golds <- loadGold xmlPath
+  return $ assemble trees golds
 
 -- | Reads the abstract syntax trees of @FraCaSBankI.gf@, keyed by the
 -- identifiers of the treebank (e.g. @s_001_2_q@).
@@ -68,15 +77,22 @@ loadTrees path = do
   let lins = M.fromList $ mapMaybe parseLin $ T.lines txt
   return $ M.mapMaybe (\body -> PGF.readExpr . T.unpack =<< dealias lins body) lins
 
--- | Reads the @fracas_answer@ attributes of @fracas.xml@.
-loadAnswers :: FilePath -> IO (M.Map Int Answer)
-loadAnswers path = do
+-- | Reads the gold answers and the sentences of @fracas.xml@.  The sentences
+-- are the ones the test suite words, and are kept for display only: the
+-- translation reads the trees of the treebank instead.
+loadGold :: FilePath -> IO (M.Map Int Gold)
+loadGold path = do
   doc <- X.readFile X.def path
-  let rows = fromDocument doc $// element "problem"
-               &| \c -> (attribute "id" c, attribute "fracas_answer" c)
-  return $ M.fromList [(i, a) | (ids, as) <- rows
-                              , i <- mapMaybe (readInt . T.unpack) ids
-                              , a <- mapMaybe toAnswer as]
+  let rows = fromDocument doc $// element "problem" &| \c ->
+               (attribute "id" c
+               , Gold { goldAnswer = listToMaybe' $ mapMaybe toAnswer
+                                   $ attribute "fracas_answer" c
+                      , premiseTexts = textsOf "p" c
+                      , hypothesisText = listToMaybe' $ textsOf "h" c })
+  return $ M.fromList [(i, g) | (ids, g) <- rows
+                              , i <- mapMaybe (readInt . T.unpack) ids]
+  where textsOf name c = [ T.strip $ T.concat (child $/ content)
+                         | child <- c $/ element name ]
 
 -- | The section of the FraCaS test suite a problem belongs to.  The boundaries
 -- are those of the section markers of @fracas.xml@.
@@ -113,14 +129,15 @@ dealias lins = go (M.size lins)
 
 -- | Collects the trees of each problem.  Identifiers are of the form
 -- @s_\<problem\>_\<index\>_\<role\>@, the role being @p@, @q@ or @h@.
-assemble :: M.Map T.Text PGF.Expr -> M.Map Int Answer -> [Problem]
-assemble trees answers =
+assemble :: M.Map T.Text PGF.Expr -> M.Map Int Gold -> [Problem]
+assemble trees golds =
   [ Problem { problemId = i
             , section = sectionOf i
             , premises = [e | (_, "p", e) <- entries]
             , question = listToMaybe' [e | (_, "q", e) <- entries]
             , hypothesis = listToMaybe' [e | (_, "h", e) <- entries]
-            , answer = M.lookup i answers
+            , answer = goldAnswer =<< M.lookup i golds
+            , gold = M.lookup i golds
             }
   | (i, unsorted) <- M.toAscList grouped
   , let entries = sortOn (\(idx, _, _) -> idx) unsorted ]
@@ -128,9 +145,6 @@ assemble trees answers =
     grouped = M.fromListWith (++)
                 [(i, [(idx, role, e)]) | (key, e) <- M.toList trees
                                        , Just (i, idx, role) <- [parseKey key]]
-    listToMaybe' xs = case xs of
-                        (x:_) -> Just x
-                        [] -> Nothing
 
 -- | Splits @s_001_2_q@ into the problem number, the index and the role.
 -- The treebank leaves fourteen sentences unannotated as @variants{}@, six of
@@ -148,6 +162,11 @@ parseKey key = case T.splitOn "_" key of
 
 readInt :: String -> Maybe Int
 readInt s = if not (null s) && all isDigit s then Just (read s) else Nothing
+
+listToMaybe' :: [a] -> Maybe a
+listToMaybe' xs = case xs of
+                    (x:_) -> Just x
+                    [] -> Nothing
 
 toAnswer :: T.Text -> Maybe Answer
 toAnswer a = case a of
