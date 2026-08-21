@@ -47,6 +47,7 @@ dependencies:
   - witherable >= 0.4
   - parserModules
   - unicode-show >= 0.1
+  - gf >= 3.12
   - parallel >= 3.2.2
   - yesod >= 1.6
   - yesod-core >= 1.6 && <1.7
@@ -120,6 +121,9 @@ library:
   - DTS.Prover.Wani.BackwardWithRules
   - DTS.Prover.Wani.Arrowterm
   - DTS.Prover.Wani.Prove
+  - GF.ToDTS
+  - GF.TreebankLoader
+  - GF.Inference
 
 executables:
   lightblue:
