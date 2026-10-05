@@ -45,6 +45,7 @@ data Case = Case {
 cases :: [Case]
 cases = [
   Case { caseName = "fracas_049", caseProblem = 49, expected = GFTB.Yes }
+  , Case { caseName = "fracas_065", caseProblem = 65, expected = GFTB.Unknown }
   ]
 
 -- | The proof search runs with the defaults of the @gf@ command of
