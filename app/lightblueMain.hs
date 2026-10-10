@@ -2,9 +2,13 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
 
 import Options.Applicative hiding (style) --optparse-applicative
-import Control.Applicative (optional)     --base
-import Control.Monad (forM)               --base
+import Control.Applicative (optional,(<|>)) --base
+import Control.Monad (forM,forM_)         --base
+import Control.Exception (catch,IOException) --base
 import Data.Char (toLower)
+import System.Exit (exitFailure)          --base
+import System.Info (os)                   --base
+import System.Process (callCommand)       --process
 import ListT (toList)                     --list-t
 import qualified Data.Text.Lazy as T      --text
 import qualified Data.Text.Lazy.IO as T   --text
@@ -37,6 +41,7 @@ import qualified Interface.Express.Express as Express
 import qualified JSeM as J
 import qualified JSeM.XML as J
 import qualified DTS.UDTTdeBruijn as UDTT
+import qualified DTS.UDTTwithName as UDTTwN
 import qualified DTS.DTTdeBruijn as DTT
 import qualified DTS.DTTwithName as DTTwN
 import DTS.TypeChecker (typeCheck,typeInfer,nullProver)
@@ -44,6 +49,9 @@ import qualified DTS.QueryTypes as QT
 import qualified DTS.NaturalLanguageInference as NLI
 import qualified JSeM as JSeM                         --jsem
 import qualified ML.Exp.Classification.Bounded as NLP --nlp-tools
+import qualified PGF                                  --gf
+import qualified GF.TreebankLoader as GFTB            --lightblue
+import qualified GF.Inference as GFI                  --lightblue
 
 data Options = Options Lang Command I.Style NLI.ProverName FilePath Int Int Int Int Int Int Bool Bool Bool Bool (Maybe Int) Bool Bool Bool (Maybe ExpressBrowser) (Maybe LexicalPos)
 
@@ -58,6 +66,27 @@ data Command =
     deriving (Show, Eq)
 
 data Lang = JP Juman.MorphAnalyzerName JFilter.FilterName | EN deriving (Show, Eq)
+
+-- | The lightblue command is either an inference over the FraCaS GF treebank,
+-- which needs no morphological analyzer and no input text, or one of the
+-- commands which parse a text in a natural language.
+data Invocation = RunGF GFOptions | RunStandard Options
+
+-- | Local options of the gf command.
+data GFOptions = GFOptions {
+  gfTreebank :: FilePath        -- ^ Path of FraCaSBankI.gf
+  , gfAnswers :: FilePath       -- ^ Path of fracas.xml
+  , gfProblem :: Int            -- ^ The number of the problem to run
+  , gfStyle :: I.Style
+  , gfOutput :: FilePath        -- ^ Where to write, or stdout when empty
+  , gfOpen :: Bool              -- ^ Whether to open the result in a browser
+  , gfProverName :: NLI.ProverName
+  , gfNProof :: Int
+  , gfMaxDepth :: Int
+  , gfMaxTime :: Int
+  , gfNoDiagram :: Bool
+  , gfVerbose :: Bool
+  }
 
 -- | Browser selection for Express mode
 data ExpressBrowser = BrowserDefault | BrowserChrome | BrowserFirefox
@@ -265,6 +294,70 @@ parseOptionParser = Parse
     <> showDefault
     <> value I.TREE )
 
+gfOptionParser :: Parser GFOptions
+gfOptionParser = GFOptions
+  <$> strOption
+    ( long "treebank"
+    <> metavar "FILEPATH"
+    <> value ""
+    <> help "Path of FraCaSBankI.gf (default: the value of $FRACAS_TREEBANK)" )
+  <*> strOption
+    ( long "answers"
+    <> metavar "FILEPATH"
+    <> value ""
+    <> help "Path of fracas.xml (default: the value of $FRACAS_XML)" )
+  <*> option auto
+    ( long "problem"
+    <> metavar "INT"
+    <> help "The number of the FraCaS problem to run" )
+  <*> option auto
+    ( long "style"
+    <> short 's'
+    <> metavar "text|html"
+    <> showDefault
+    <> value I.TEXT
+    <> help "Print results in the specified format" )
+  <*> strOption
+    ( long "output"
+    <> short 'o'
+    <> metavar "FILEPATH"
+    <> value ""
+    <> help "Write results to FILEPATH instead of stdout" )
+  <*> switch
+    ( long "open"
+    <> help "Write an html file and open it in a browser (implies -s html)" )
+  <*> option auto
+    ( long "prover"
+    <> short 'p'
+    <> metavar "Wani|Null"
+    <> showDefault
+    <> value NLI.Wani
+    <> help "Choose prover" )
+  <*> option auto
+    ( long "nproof"
+    <> showDefault
+    <> value 1
+    <> metavar "INT"
+    <> help "Show N-best proof diagram for each proof search" )
+  <*> option auto
+    ( long "maxdepth"
+    <> showDefault
+    <> value 5
+    <> metavar "INT"
+    <> help "Set the maximum search depth in proof search" )
+  <*> option auto
+    ( long "maxtime"
+    <> showDefault
+    <> value 100000
+    <> metavar "INT"
+    <> help "Set the maximum search time in proof search" )
+  <*> switch
+    ( long "noDiagram"
+    <> help "If specified, show no type check and proof diagram" )
+  <*> switch
+    ( long "verbose"
+    <> help "Show logs of type inferer and type checker" )
+
 jsemOptionParser :: Parser Command
 jsemOptionParser = JSeM
   <$> strOption
@@ -287,12 +380,189 @@ jsemOptionParser = JSeM
 
 -- | Main function.  Check README.md for the usage.
 main :: IO ()
-main = customExecParser p opts >>= lightblueMain 
-  where opts = info (helper <*> optionParser)
+main = customExecParser p opts >>= run
+  where opts = info (helper <*> invocationParser)
                  ( fullDesc
-                 <> progDesc "Usage: lightblue LANG COMMAND <local options> <global options>"
+                 <> progDesc "Usage: lightblue LANG COMMAND <local options> <global options>, or lightblue gf <local options>"
                  <> header "lightblue - a CCG parser with DTS (c) Daisuke Bekki and Bekki Laboratory" )
         p = prefs showHelpOnEmpty
+        run (RunGF gfOptions) = gfMain gfOptions
+        run (RunStandard options) = lightblueMain options
+
+invocationParser :: Parser Invocation
+invocationParser =
+  (RunGF <$> subparser
+    (command "gf"
+       (info (helper <*> gfOptionParser)
+             (progDesc "Runs an inference of the FraCaS GF treebank.  Needs no morphological analyzer." ))
+    <> metavar "gf"
+    <> commandGroup "Inference over the FraCaS GF treebank"))
+  <|> (RunStandard <$> optionParser)
+
+-- | Renders a result of the gf command.  Only text and html are supported,
+-- since the remaining styles have no notation for a proof diagram.
+gfPrinter :: (T.SimpleText a, I.MathML a) => I.Style -> a -> T.Text
+gfPrinter I.HTML obj = T.concat [I.startMathML, I.toMathML obj, I.endMathML]
+gfPrinter _ obj = T.toText obj
+
+-- | Renders an abstract syntax tree over several lines, so that the structure
+-- can be read off the indentation.  A subtree which fits on one line is kept
+-- on one line, since a leaf on a line of its own only adds noise.
+showTree :: Int -> PGF.Expr -> String
+showTree indent expr
+  | length flat <= 64 = flat
+  | otherwise = case PGF.unApp expr of
+      Just (fun, args@(_:_)) ->
+        "(" ++ PGF.showCId fun
+            ++ concatMap (\arg -> "\n" ++ pad ++ showTree (indent+2) arg) args ++ ")"
+      _ -> flat
+  where
+    -- | An application needs the parentheses which showExpr omits at the top.
+    flat = case PGF.unApp expr of
+             Just (_, []) -> PGF.showExpr [] expr
+             _ -> "(" ++ PGF.showExpr [] expr ++ ")"
+    pad = replicate (indent+2) ' '
+
+-- | Escapes the characters which would be markup in an html page.
+escapeHtml :: String -> String
+escapeHtml = concatMap $ \c -> case c of
+  '&' -> "&amp;"
+  '<' -> "&lt;"
+  '>' -> "&gt;"
+  _ -> [c]
+
+-- | Runs one problem of the FraCaS GF treebank.
+gfMain :: GFOptions -> IO ()
+gfMain GFOptions{..} = do
+  treebankPath <- resolvePath "FRACAS_TREEBANK" "--treebank" gfTreebank
+  answersPath <- resolvePath "FRACAS_XML" "--answers" gfAnswers
+  problems <- GFTB.loadFraCaS treebankPath answersPath
+  case L.find ((== gfProblem) . GFTB.problemId) problems of
+    Nothing -> abort $ "No FraCaS problem is numbered " ++ show gfProblem
+    Just problem -> case GFI.translateProblem problem of
+      Left err -> abort $ "Translation failed: " ++ err
+      Right translation -> do
+        -- | The inference runs before anything is written, so that the answer
+        -- can be put at the top where it is read without scrolling.
+        let prover = NLI.getProver gfProverName $ QT.defaultProofSearchSetting {
+              QT.maxDepth = (Just gfMaxDepth),
+              QT.maxTime = (Just gfMaxTime)
+              }
+        verdict <- GFI.infer prover gfNProof gfVerbose translation
+        handle <- if null outputPath
+                    then return S.stdout
+                    else do h <- S.openFile outputPath S.WriteMode
+                            S.hSetEncoding h S.utf8
+                            return h
+        S.hPutStrLn handle $ I.headerOf style
+        section handle $ "[FraCaS " ++ show (GFTB.problemId problem)
+                         ++ ", section " ++ show (GFTB.section problem) ++ "]"
+        -- | The sentences of the test suite, which the treebank does not hold.
+        case GFTB.gold problem of
+          Nothing -> plain handle "(fracas.xml has no entry for this problem)"
+          Just g -> plain handle $ L.intercalate "\n" $
+            [ "Premise " ++ show i ++ ": " ++ StrictT.unpack text
+            | (text,i) <- zip (GFTB.premiseTexts g) [(1::Int)..] ]
+            ++ [ "Hypothesis: " ++ maybe "(none)" StrictT.unpack
+                                     (GFTB.hypothesisText g) ]
+        section handle "[Result]"
+        plain handle $ L.intercalate "\n"
+          [ "Prediction: " ++ case verdict of
+              GFI.Felicitous result -> show (GFI.answer result)
+              GFI.Infelicitous name -> "(the felicity check of " ++ name ++ " failed)"
+          , "Gold: " ++ maybe "(none)" show (GFTB.answer problem) ]
+        section handle "[Settings]"
+        plain handle $ L.intercalate "\n"
+          [ "prover: " ++ show gfProverName
+          , "nproof: " ++ show gfNProof
+          , "maxdepth: " ++ show gfMaxDepth
+          , "maxtime: " ++ show gfMaxTime
+          , "treebank: " ++ treebankPath
+          , "answers: " ++ answersPath ]
+        section handle "[Abstract syntax trees]"
+        forM_ (GFI.sentences translation) $ \sentence ->
+          plain handle $ GFI.role sentence ++ ":\n  "
+                       ++ showTree 2 (GFI.tree sentence)
+        section handle "[Signature]"
+        T.hPutStrLn handle $ gfPrinter style $ DTTwN.fromDeBruijnSignature
+                           $ GFI.signature translation
+        section handle "[Semantic representations]"
+        forM_ (GFI.sentences translation) $ \sentence -> do
+          plain handle $ GFI.role sentence ++ " ="
+          T.hPutStrLn handle $ gfPrinter style $ UDTTwN.fromDeBruijn []
+                             $ GFI.preterm sentence
+        case verdict of
+          -- | The sections above are written even when the check fails, since
+          -- they are what tells which sentence to look at.
+          GFI.Infelicitous name -> do
+            finish handle
+            abort $ "The semantic felicity check of " ++ name ++ " found no diagram."
+          GFI.Felicitous result -> do
+            forM_ (GFI.felicityChecks result) $ \check -> do
+              section handle $ "[Type check query for " ++ GFI.checkedRole check ++ "]"
+              T.hPutStrLn handle $ gfPrinter style $ UDTTwN.fromDeBruijnJudgment
+                                 $ GFI.checkQuery check
+              showDiagram handle ("Type check diagram for " ++ GFI.checkedRole check)
+                          (GFI.checkDiagram check)
+            showQuery handle "Positive" $ GFI.positive result
+            showQuery handle "Negative" $ GFI.negative result
+            finish handle
+  where
+    -- | An explicit path wins; otherwise --open needs one, and picks its own.
+    outputPath | not (null gfOutput) = gfOutput
+               | gfOpen = "fracas" ++ show gfProblem ++ ".html"
+               | otherwise = ""
+    -- | Opening a page in a browser only makes sense for the html style.
+    style = if gfOpen then I.HTML else gfStyle
+    finish handle =
+      if null outputPath
+        then return ()
+        else do S.hClose handle
+                S.hPutStrLn S.stderr $ "Wrote " ++ outputPath
+                if gfOpen then openInBrowser outputPath else return ()
+    -- | interimOf draws a rule but drops the heading in html, so the heading
+    -- is written out separately, or the sections would carry no label at all.
+    section handle heading = S.hPutStrLn handle $ case style of
+      I.HTML -> I.interimOf style heading ++ "<h3>" ++ escapeHtml heading ++ "</h3>"
+      _ -> I.interimOf style heading
+    -- | Writes plain text, which an html page has to keep the line breaks of.
+    plain handle text = S.hPutStrLn handle $ case style of
+                          I.HTML -> "<pre>" ++ escapeHtml text ++ "</pre>"
+                          _ -> text
+    -- | Both queries are shown even when no proof is found, since an empty
+    -- result is what tells Unknown apart from Yes and No.
+    showQuery handle name (query, diagrams) = do
+      section handle $ "[" ++ name ++ " proof search query]"
+      T.hPutStrLn handle $ gfPrinter style $ DTTwN.fromDeBruijnProofSearchQuery query
+      plain handle $ show (length diagrams) ++ " proof diagram(s) found"
+      forM_ (zip diagrams [(1::Int)..]) $ \(diagram,i) ->
+        showDiagram handle (name ++ " proof diagram " ++ show i) diagram
+    showDiagram handle heading diagram =
+      if gfNoDiagram
+        then return ()
+        else do section handle $ "[" ++ heading ++ "]"
+                T.hPutStrLn handle $ gfPrinter style
+                                   $ fmap DTTwN.fromDeBruijnJudgment diagram
+    abort message = S.hPutStrLn S.stderr message >> exitFailure
+    -- | Falls back on an environment variable when the option is not given.
+    resolvePath envName optName given
+      | not (null given) = return given
+      | otherwise = do
+          fromEnv <- E.lookupEnv envName
+          case fromEnv of
+            Just path | not (null path) -> return path
+            _ -> abort $ "Specify " ++ optName ++ " or set the $" ++ envName
+                         ++ " environment variable."
+
+-- | Hands a file to the browser of the platform.  A failure to open one is not
+-- an error, since the file itself has been written by then.
+openInBrowser :: FilePath -> IO ()
+openInBrowser path = callCommand cmd `catch` \e ->
+    S.hPutStrLn S.stderr $ "Failed to open a browser: " ++ show (e::IOException)
+  where cmd = case os of
+                "darwin" -> "open " ++ show path
+                "mingw32" -> "start " ++ show path
+                _ -> "xdg-open " ++ show path
 
 lightblueMain :: Options -> IO ()
 lightblueMain (Options lang commands style proverName filepath beamW nParse nTypeCheck nProof maxDepth maxTime noTypeCheck noInference ifTime verbose mDepth noShowCat noShowSem leafVertical mExpressBrowser mLexPos) = do
