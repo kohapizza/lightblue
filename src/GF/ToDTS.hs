@@ -9,15 +9,18 @@ Translation from GF abstract syntax trees (@PGF.Expr@) into UDTT pretermes.
 @
   PN                      Entity
   N, CN, VP, Comp         Entity -> type
+  A, AP                   Entity -> type
   NP                      (Entity -> type) -> type
   Det, Quant              (Entity -> type) -> (Entity -> type) -> type
   V2                      Entity -> Entity -> type
+  VV                      (Entity -> type) -> Entity -> type
   VPSlash                 ((Entity -> type) -> type) -> Entity -> type
   Cl, S, Phr              type
   Num, Pol, Temp          ignored
 @
 
-The fragment currently covers the abstract functions of FraCaS problem 049.
+The fragment grows problem by problem over FraCaS Section 1; the tests in
+@test\/GF\/testFraCaS.hs@ list the problems it covers end to end.
 -}
 
 module GF.ToDTS (
@@ -79,12 +82,25 @@ structural = M.fromList [
       UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
   , ("every_Det", lam p $ lam q $                                -- Det
       UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (app (var q) (var x))))
+  -- "both" is read with universal force; its presupposition that the
+  -- restrictor holds of exactly two entities is left to the @ machinery.
+  , ("both_Det", lam p $ lam q $                                 -- Det
+      UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (app (var q) (var x))))
+  -- adjectival modification, read intersectively
+  , ("PositA", lam a $ var a)                                    -- A -> AP
+  , ("AdjCN", lam a $ lam p $ lam x $                            -- AP -> CN -> CN
+      UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
   -- verb phrases
   , ("UseComp", lam co $ var co)                                 -- Comp -> VP
   , ("CompCN", lam p $ var p)                                    -- CN -> Comp
   , ("SlashV2a", lam v $ lam np $ lam x $                        -- V2 -> VPSlash
       app (var np) (lam y (app (app (var v) (var y)) (var x))))
   , ("ComplSlash", lam vs $ lam np $ app (var vs) (var np))      -- VPSlash -> NP -> VP
+  , ("ComplVV", lam v $ lam vp $ app (var v) (var vp))           -- VV -> VP -> VP
+  -- "used to" marks tense and aspect, which the fragment ignores, so it
+  -- denotes the identity on verb phrases.  Intensional complement verbs
+  -- such as want_VV are deliberately left out.
+  , ("use_VV", lam vp $ var vp)                                  -- VV
   -- the fragment ignores number, polarity and tense
   , ("NumSg", UwN.Unit)
   , ("PPos", UwN.Unit)
@@ -127,7 +143,8 @@ lexical name = case splitTag name of
 
 -- variable names, kept distinct within each interpretation
 
-c, co, d, n, np, p, pl, q, s, t, u, v, vp, vs, x, y :: UwN.VarName
+a, c, co, d, n, np, p, pl, q, s, t, u, v, vp, vs, x, y :: UwN.VarName
+a = UwN.VarName 'a' 0
 c = UwN.VarName 'c' 0
 co = UwN.VarName 'C' 0
 d = UwN.VarName 'd' 0
