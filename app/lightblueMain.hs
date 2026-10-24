@@ -470,7 +470,13 @@ gfMain GFOptions{..} = do
           [ "Prediction: " ++ case verdict of
               GFI.Felicitous result -> show (GFI.answer result)
               GFI.Infelicitous name -> "(the felicity check of " ++ name ++ " failed)"
-          , "Gold: " ++ maybe "(none)" show (GFTB.answer problem) ]
+          , "Gold: " ++ maybe "(none)" show (GFTB.answer problem)
+          , "Accommodation: " ++ case verdict of
+              GFI.Felicitous result | accs@(_:_) <- GFI.accommodations result ->
+                L.intercalate "; "
+                  [ name ++ " +{" ++ T.unpack (T.toText typ) ++ "}"
+                  | (name, typs) <- accs, typ <- typs ]
+              _ -> "(none)" ]
         section handle "[Settings]"
         plain handle $ L.intercalate "\n"
           [ "prover: " ++ show gfProverName
