@@ -50,7 +50,20 @@ jobs:
       - name: Build
         run: stack build
 
-      # Without FRACAS_TREEBANK and FRACAS_XML the suite reports its cases as
-      # skipped, so this checks that the suite compiles and runs.
+      # The treebank (GPL v3) and fracas.xml are not part of this repository,
+      # so they are fetched from known-good pinned revisions.
+      - name: Check out the FraCaS treebank
+        uses: actions/checkout@v7
+        with:
+          repository: heatherleaf/FraCaS-treebank
+          ref: 678c968a42ab43909ec7c99190f78ac197af879b
+          path: fracas-treebank
+
+      - name: Fetch the FraCaS gold answers
+        run: curl -sSfL -o fracas.xml https://raw.githubusercontent.com/gangeli/NaturalLI/2174b4248b240167d40525f65f7e32713630ce8b/etc/fracas.xml
+
       - name: Test
         run: stack test lightblue:gfFraCaS
+        env:
+          FRACAS_TREEBANK: ${{ github.workspace }}/fracas-treebank/src/FraCaSBankI.gf
+          FRACAS_XML: ${{ github.workspace }}/fracas.xml
