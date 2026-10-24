@@ -77,10 +77,35 @@ To parse a JSeM file and execute inferences therein, then you can feed it to *li
 $ ./lightblue jp jsem -f <jsemfile>
 ```
 
+To execute an inference of the FraCaS GF treebank, give the number of the problem:
+```
+$ export FRACAS_TREEBANK=<path>/FraCaSBankI.gf
+$ export FRACAS_XML=<path>/fracas.xml
+$ ./lightblue gf --problem 49
+```
+This translates the abstract syntax trees of problem 49 into UDTT pretermes and
+prints, in this order, the sentences of the test suite, the settings of the run,
+their trees, the signature, their semantic representations, the type check query
+and diagram of each sentence, the two proof search queries with their diagrams,
+and finally the predicted and the gold label.  To read the proof diagrams in a
+browser, ```--open``` writes an html file and opens it:
+```
+$ ./lightblue gf --problem 49 --open
+```
+The two files are distributed separately from lightblue:
+[FraCaSBankI.gf](https://github.com/heatherleaf/FraCaS-treebank) holds the trees,
+and `fracas.xml` (Bill MacCartney) holds the sentences and the gold answers.
+Their paths may also be given with ```--treebank``` and ```--answers```.
+
 ### Usage
 The syntax of the lightblue command is as follows:
 ```
 ./lightblue <lang> <lang's local options> <command> <command's local options> <global options>
+```
+The ```gf``` command is the exception: it needs no morphological analyzer and no
+input text, so it takes neither a language nor the global options.
+```
+./lightblue gf <gf's local options>
 ```
 
 |Lang    |                           |
@@ -98,10 +123,11 @@ The syntax of the lightblue command is as follows:
 |```parse```     |Parse Sentences and returns parsing results.                           |
 |```jsem```      |Parse a JSeM file and execute inferences.                              |
 |```numeration```|Shows the list of lexical items prepared for parsing the given sentence|
+|```gf```        |Execute an inference of the FraCaS GF treebank (takes no ```<lang>```).|
 |```version```   |Print the lightblue version.                                           |
 |```stat```      |Print the lightblue statistics.                                        |
 
-Each of ```parse ``` and ```jsem``` commands has a set of local options.
+Each of ```parse ```, ```jsem``` and ```gf``` commands has a set of local options.
 
 |Local Options for ```parse```                     |Default   |Description                                                    |  
 |:-------------------------------------------------|:---------|:--------------------------------------------------------------|
@@ -111,6 +137,21 @@ Each of ```parse ``` and ```jsem``` commands has a set of local options.
 |:-------------------------------------------------|:---------|:-------------------------------------|
 |```--jsemid <text>```                             |```all``` |Skip JSeM data the JSeM ID of which is not equial to this value.           |
 |```--nsample <int>```                             |```-1```  |Specify a number of JSeM data to process (A negative value means all data) |
+
+|Local Options for ```gf```                        |Default   |Description                           |
+|:-------------------------------------------------|:---------|:-------------------------------------|
+|```--problem <int>```                             |          |The number (1 to 346) of the FraCaS problem to run. Required. |
+|```--treebank <filepath>```                       |```$FRACAS_TREEBANK```|Path of ```FraCaSBankI.gf```, which holds the abstract syntax trees. |
+|```--answers <filepath>```                        |```$FRACAS_XML```|Path of ```fracas.xml```, which holds the sentences and the gold answers. |
+|```-s``` or ```--style {text\|html}```            |```text```|Show results in the specified format. ```html``` renders the pretermes and the diagrams in MathML. |
+|```-o``` or ```--output <filepath>```             |          |Write results to &lt;filepath&gt; instead of stdout. |
+|```--open```                                      |          |Write an html file and open it in a browser. Implies ```-s html```, and writes to ```fracas<int>.html``` unless ```-o``` says otherwise. |
+|```-p``` or ```--prover {Wani\|Null}```           |```Wani```|Choose a prover. |
+|```--nproof <int>```                              |```1```   |Show N-best proof diagram for each proof search (A negative value means all diagrams) |
+|```--maxdepth <int>```                            |```5```   |Set the maximum search depth in proof search |
+|```--maxtime <int>```                             |```100000```|Set the maximum search time in proof search |
+|```--noDiagram```                                 |          |If specified, show no type check and proof diagram. |
+|```--verbose```                                   |          |Show type infer/check logs in stderr. |
 
 The global options are common to all commands.
 

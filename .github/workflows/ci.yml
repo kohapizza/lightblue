@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # hexpat binds to the C library expat, which the macOS SDK already provides.
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libexpat1-dev
+
+      # GHC links against the Command Line Tools SDK, which the default Xcode's older ld cannot read.
+      # Remove once https://github.com/actions/runner-images/issues/14940 is fixed.
+      - name: Use the Command Line Tools toolchain
+        if: runner.os == 'macOS'
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+
+      - uses: haskell-actions/setup@v2
+        with:
+          enable-stack: true
+          stack-no-global: true
+
+      # stack.yaml.lock is gitignored, so the cache is keyed on the inputs it is derived from.
+      # .stack-work is not cached: rebuilding lightblue itself takes under a minute.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.stack
+          key: stack-${{ runner.os }}-${{ hashFiles('stack.yaml', 'package.yaml') }}
+          restore-keys: stack-${{ runner.os }}-
+
+      # The other test suites of upstream do not compile yet, so only gfFraCaS is run.
+      - name: Build
+        run: stack build
+
+      # The treebank (GPL v3) and fracas.xml are not part of this repository,
+      # so they are fetched from known-good pinned revisions.
+      - name: Check out the FraCaS treebank
+        uses: actions/checkout@v7
+        with:
+          repository: heatherleaf/FraCaS-treebank
+          ref: 678c968a42ab43909ec7c99190f78ac197af879b
+          path: fracas-treebank
+
+      - name: Fetch the FraCaS gold answers
+        run: curl -sSfL -o fracas.xml https://raw.githubusercontent.com/gangeli/NaturalLI/2174b4248b240167d40525f65f7e32713630ce8b/etc/fracas.xml
+
+      - name: Test
+        run: stack test lightblue:gfFraCaS
+        env:
+          FRACAS_TREEBANK: ${{ github.workspace }}/fracas-treebank/src/FraCaSBankI.gf
+          FRACAS_XML: ${{ github.workspace }}/fracas.xml
