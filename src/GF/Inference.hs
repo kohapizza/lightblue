@@ -22,6 +22,7 @@ module GF.Inference (
   , infer
   ) where
 
+import qualified Data.List as L           --base
 import qualified ListT                    --list-t
 import qualified PGF                      --gf
 import qualified DTS.UDTTdeBruijn as U    --lightblue
@@ -80,9 +81,13 @@ data Result = Result {
   , contxt :: DTT.Context
   -- ^ The context the felicity checks built.  Its head is the hypothesis and
   -- its tail is the premises, as in
-  -- 'DTS.NaturalLanguageInference.sequentialTypeCheck'.
+  -- 'DTS.NaturalLanguageInference.sequentialTypeCheck', with any
+  -- accommodated presuppositions below the premise which called for them.
   , felicityChecks :: [FelicityCheck]
   -- ^ One per sentence, in the order the sentences are given.
+  , accommodations :: [(String, [DTT.Preterm])]
+  -- ^ The premises whose felicity check succeeded only after their
+  -- presuppositions were added to the context, with the types added.
   , positive :: (DTT.ProofSearchQuery, [QT.DTTProofDiagram])
   -- ^ The query which asks for the hypothesis, and the proofs found.
   , negative :: (DTT.ProofSearchQuery, [QT.DTTProofDiagram])
@@ -97,10 +102,10 @@ infer :: QT.Prover
          -> Translation
          -> IO Verdict
 infer prover nProof verbose translation = do
-    checked <- felicityCheck [] (sentences translation)
+    checked <- felicityCheck [] [] [] (sentences translation)
     case checked of
       Left name -> return $ Infelicitous name
-      Right checks -> case contextOf checks of
+      Right (ctx, accs, checks) -> case ctx of
         [] -> return $ Infelicitous "(no sentence)"
         terms@(hypo:prems) -> do
           let psqPos = DTT.ProofSearchQuery sig prems hypo
@@ -110,26 +115,97 @@ infer prover nProof verbose translation = do
           return $ Felicitous Result {
               answer = answerOf proofs refutations
             , contxt = terms
-            , felicityChecks = reverse checks
+            , felicityChecks = checks
+            , accommodations = accs
             , positive = (psqPos, proofs)
             , negative = (psqNeg, refutations)
             }
   where
     sig = signature translation
     takeNbest = ListT.toList . (if nProof >= 0 then ListT.take nProof else id)
-    -- | The checks are accumulated in reverse, which is the order a context
-    -- takes: the sentence checked last comes first.
-    contextOf = map (DTT.trm . Tree.node . checkDiagram)
+    typeOf = DTT.trm . Tree.node . checkDiagram
     answerOf proofs refutations
       | not (null proofs) = TB.Yes
       | not (null refutations) = TB.No
       | otherwise = TB.Unknown
-    -- | Extends the context with the first type check diagram of each sentence.
-    felicityCheck checks [] = return $ Right checks
-    felicityCheck checks (sentence:rest) = do
-      let query = U.Judgment sig (contextOf checks) (preterm sentence) DTT.Type
+    -- | Checks each sentence in the context the previous ones built (the
+    -- sentence checked last comes first).  Underspecified terms resolve
+    -- against that context during the check; when the check of a premise
+    -- fails, its closed presuppositions are accommodated: added to the
+    -- context, and the check is run once more.  The hypothesis is never
+    -- accommodated, since an assumption added for its own presupposition
+    -- could feed the proof of the hypothesis itself.
+    felicityCheck ctx accs checks [] = return $ Right (ctx, reverse accs, reverse checks)
+    felicityCheck ctx accs checks (sentence:rest) = do
+      first <- runCheck ctx sentence
+      case first of
+        Just check -> felicityCheck (typeOf check : ctx) accs (check : checks) rest
+        Nothing
+          | role sentence /= "Hypothesis"
+          , presups@(_:_) <- closedPresuppositions (preterm sentence) -> do
+              let ctx' = presups ++ ctx
+              retry <- runCheck ctx' sentence
+              case retry of
+                Just check -> felicityCheck (typeOf check : ctx')
+                                            ((role sentence, presups) : accs)
+                                            (check : checks) rest
+                Nothing -> return $ Left $ role sentence
+          | otherwise -> return $ Left $ role sentence
+    runCheck ctx sentence = do
+      let query = U.Judgment sig ctx (preterm sentence) DTT.Type
       diagrams <- ListT.uncons $ TY.typeCheck prover verbose query
-      case diagrams of
-        Nothing -> return $ Left $ role sentence
-        Just (diagram, _) ->
-          felicityCheck (FelicityCheck (role sentence) query diagram : checks) rest
+      return $ fmap (FelicityCheck (role sentence) query . fst) diagrams
+
+-- | The types of the underspecified terms of a sentence which do not depend on
+-- any variable bound around them.  Only those can be accommodated globally: a
+-- presupposition under a binder would escape it.  A type which another
+-- underspecified term lies within is left out, since it cannot be stated
+-- before that inner term is resolved.
+closedPresuppositions :: U.Preterm -> [DTT.Preterm]
+closedPresuppositions = L.nub . collect
+  where
+    collect term = case term of
+      U.Asp t -> [t' | closed 0 t, Just t' <- [U.toDTT t]] ++ collect t
+      U.Pi a b -> collect a ++ collect b
+      U.Lam m -> collect m
+      U.App m n -> collect m ++ collect n
+      U.Not m -> collect m
+      U.Sigma a b -> collect a ++ collect b
+      U.Pair m n -> collect m ++ collect n
+      U.Proj _ m -> collect m
+      U.Disj a b -> collect a ++ collect b
+      U.Iota _ m -> collect m
+      U.Unpack p l m n -> concatMap collect [p, l, m, n]
+      U.Succ m -> collect m
+      U.Natrec p l m n -> concatMap collect [p, l, m, n]
+      U.Eq a m n -> concatMap collect [a, m, n]
+      U.Refl a m -> collect a ++ collect m
+      U.Idpeel p l m -> concatMap collect [p, l, m]
+      U.Lamvec m -> collect m
+      U.Appvec _ m -> collect m
+      U.Ann m _ -> collect m
+      _ -> []
+    -- | Whether no variable of the term escapes it, counting the binders of
+    -- the fragment ('Pi', 'Lam', 'Sigma' and 'Lamvec' bind one variable).
+    closed d term = case term of
+      U.Var i -> i < d
+      U.Pi a b -> closed d a && closed (d + 1) b
+      U.Lam m -> closed (d + 1) m
+      U.App m n -> closed d m && closed d n
+      U.Not m -> closed d m
+      U.Sigma a b -> closed d a && closed (d + 1) b
+      U.Pair m n -> closed d m && closed d n
+      U.Proj _ m -> closed d m
+      U.Disj a b -> closed d a && closed d b
+      U.Iota _ m -> closed d m
+      U.Unpack p l m n -> all (closed d) [p, l, m, n]
+      U.Succ m -> closed d m
+      U.Natrec p l m n -> all (closed d) [p, l, m, n]
+      U.Eq a m n -> all (closed d) [a, m, n]
+      U.Refl a m -> closed d a && closed d m
+      U.Idpeel p l m -> all (closed d) [p, l, m]
+      U.Asp m -> closed d m
+      U.Lamvec m -> closed (d + 1) m
+      U.Appvec i m -> i < d && closed d m
+      U.Ann m _ -> closed d m
+      _ -> True
