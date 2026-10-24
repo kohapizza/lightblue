@@ -46,6 +46,11 @@ jobs:
           key: stack-${{ runner.os }}-${{ hashFiles('stack.yaml', 'package.yaml') }}
           restore-keys: stack-${{ runner.os }}-
 
-      # The existing tests do not compile yet, so only the library and executables are built.
+      # The other test suites of upstream do not compile yet, so only gfFraCaS is run.
       - name: Build
         run: stack build
+
+      # Without FRACAS_TREEBANK and FRACAS_XML the suite reports its cases as
+      # skipped, so this checks that the suite compiles and runs.
+      - name: Test
+        run: stack test lightblue:gfFraCaS
