@@ -80,6 +80,22 @@ structural = M.fromList [
   , ("DetQuant", lam q $ lam n $ var q)                          -- Quant -> Num -> Det
   , ("IndefArt", lam p $ lam q $                                 -- Quant
       UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
+  -- The definite article presupposes an entity of which the restrictor
+  -- holds: the presupposition is an underspecified term, whose resolution
+  -- (anaphoric, or accommodated for premises) is the business of
+  -- 'GF.Inference'.
+  , ("DefArt", lam p $ lam q $                                   -- Quant
+      app (var q) (UwN.Proj UwN.Fst
+        (UwN.Asp (UwN.Sigma x UwN.Entity (app (var p) (var x))))))
+  -- plurality is ignored, so "some" is plain existential quantification
+  , ("somePl_Det", lam p $ lam q $                               -- Det
+      UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
+  , ("someSg_Det", lam p $ lam q $                               -- Det
+      UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
+  -- negation is spelled out as a function into the bottom type, since the
+  -- type checker has no rule for the Not constructor
+  , ("no_Quant", lam p $ lam q $                                 -- Quant
+      UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (UwN.Pi y (app (var q) (var x)) UwN.Bot)))
   , ("every_Det", lam p $ lam q $                                -- Det
       UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (app (var q) (var x))))
   -- "both" is read with universal force; its presupposition that the
@@ -119,6 +135,11 @@ structural = M.fromList [
   , ("CompNP", lam np $ lam x $                                  -- NP -> Comp
       app (var np) (lam y (UwN.Eq UwN.Entity (var y) (var x))))
   , ("ComplVV", lam v $ lam vp $ app (var v) (var vp))           -- VV -> VP -> VP
+  -- Verb phrase adverbs are read as predicates of the subject, conjoined
+  -- with the verb phrase; without an event argument this is as close as
+  -- the fragment comes to "x finished [it] on time".
+  , ("AdvVP", lam vp $ lam a $ lam x $                           -- VP -> Adv -> VP
+      UwN.Sigma u (app (var vp) (var x)) (app (var a) (var x)))
   -- "used to" marks tense and aspect, which the fragment ignores, so it
   -- denotes the identity on verb phrases.  Intensional complement verbs
   -- such as want_VV are deliberately left out.
