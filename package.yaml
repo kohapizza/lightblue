@@ -124,6 +124,8 @@ library:
   - GF.ToDTS
   - GF.TreebankLoader
   - GF.Inference
+  - DTS.Prover.Oracle.Oracle
+  - DTS.Prover.Oracle.OracleUtils
 
 executables:
   lightblue:

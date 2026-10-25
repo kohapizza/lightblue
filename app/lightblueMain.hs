@@ -52,8 +52,9 @@ import qualified ML.Exp.Classification.Bounded as NLP --nlp-tools
 import qualified PGF                                  --gf
 import qualified GF.TreebankLoader as GFTB            --lightblue
 import qualified GF.Inference as GFI                  --lightblue
+import qualified DTS.Prover.Oracle.Oracle as Oracle   --lightblue
 
-data Options = Options Lang Command I.Style NLI.ProverName FilePath Int Int Int Int Int Int Bool Bool Bool Bool (Maybe Int) Bool Bool Bool (Maybe ExpressBrowser) (Maybe LexicalPos)
+data Options = Options Lang Command I.Style NLI.ProverName FilePath Int Int Int Int Int Int Bool Bool Bool Bool (Maybe Int) Bool Bool Bool (Maybe ExpressBrowser) (Maybe LexicalPos) Bool
 
 data Command =
   Parse I.ParseOutput
@@ -86,6 +87,7 @@ data GFOptions = GFOptions {
   , gfMaxTime :: Int
   , gfNoDiagram :: Bool
   , gfVerbose :: Bool
+  , gfEnableOracle :: Bool
   }
 
 -- | Browser selection for Express mode
@@ -283,6 +285,9 @@ optionParser =
       ( long "lexicalPos"
       <> metavar "top|bottom|none"
       <> help "Set Lexical Items position in Express view" ))
+    <*> switch 
+      ( long "enableOracle"
+      <> help "Enable Oracle if specified" )
 
 parseOptionParser :: Parser Command
 parseOptionParser = Parse
@@ -357,6 +362,9 @@ gfOptionParser = GFOptions
   <*> switch
     ( long "verbose"
     <> help "Show logs of type inferer and type checker" )
+  <*> switch
+    ( long "enableOracle"
+    <> help "Let the prover close gaps between constants with the embedding oracle" )
 
 jsemOptionParser :: Parser Command
 jsemOptionParser = JSeM
@@ -444,9 +452,13 @@ gfMain GFOptions{..} = do
       Right translation -> do
         -- | The inference runs before anything is written, so that the answer
         -- can be put at the top where it is read without scrolling.
+        maybeOracle <- if gfEnableOracle
+                         then Just <$> Oracle.oracleBuilder
+                         else return Nothing
         let prover = NLI.getProver gfProverName $ QT.defaultProofSearchSetting {
               QT.maxDepth = (Just gfMaxDepth),
-              QT.maxTime = (Just gfMaxTime)
+              QT.maxTime = (Just gfMaxTime),
+              QT.oracle = maybeOracle
               }
         verdict <- GFI.infer prover gfNProof gfVerbose translation
         handle <- if null outputPath
@@ -477,6 +489,7 @@ gfMain GFOptions{..} = do
           , "nproof: " ++ show gfNProof
           , "maxdepth: " ++ show gfMaxDepth
           , "maxtime: " ++ show gfMaxTime
+          , "oracle: " ++ (if gfEnableOracle then "enabled" else "disabled")
           , "treebank: " ++ treebankPath
           , "answers: " ++ answersPath ]
         section handle "[Abstract syntax trees]"
@@ -565,7 +578,7 @@ openInBrowser path = callCommand cmd `catch` \e ->
                 _ -> "xdg-open " ++ show path
 
 lightblueMain :: Options -> IO ()
-lightblueMain (Options lang commands style proverName filepath beamW nParse nTypeCheck nProof maxDepth maxTime noTypeCheck noInference ifTime verbose mDepth noShowCat noShowSem leafVertical mExpressBrowser mLexPos) = do
+lightblueMain (Options lang commands style proverName filepath beamW nParse nTypeCheck nProof maxDepth maxTime noTypeCheck noInference ifTime verbose mDepth noShowCat noShowSem leafVertical mExpressBrowser mLexPos enableOracle) = do
   start <- Time.getCurrentTime
   langOptions <- case lang of
                    JP morphaName filterName -> do
@@ -596,10 +609,14 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
     -- | Parse command
     -- |
     lightblueMainLocal (Parse output) parseSetting contents = do
+      maybeOracle <- if enableOracle
+                then Just <$> Oracle.oracleBuilder
+                else return Nothing
       let handle = S.stdout
           prover = NLI.getProver proverName $ QT.defaultProofSearchSetting {
             QT.maxDepth = (Just maxDepth),
-            QT.maxTime = (Just maxTime)
+            QT.maxTime = (Just maxTime),
+            QT.oracle = maybeOracle
             }
           parseResult = NLI.parseWithTypeCheck parseSetting prover [("dummy",DTT.Entity)] [] $ T.lines contents
           posTagOnly = case output of 
@@ -634,6 +651,9 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
     -- | JSeM command
     -- 
     lightblueMainLocal (JSeM jsemID nSample) parseSetting contents = do
+      maybeOracle <- if enableOracle
+                then Just <$> Oracle.oracleBuilder
+                else return Nothing
       parsedJSeM <- J.xml2jsemData $ T.toStrict contents
       let parsedJSeM'
             | jsemID == "all" = parsedJSeM
@@ -644,7 +664,8 @@ lightblueMain (Options lang commands style proverName filepath beamW nParse nTyp
           handle = S.stdout
           prover = NLI.getProver proverName $ QT.defaultProofSearchSetting {
             QT.maxDepth = Just maxDepth, 
-            QT.maxTime = Just maxTime
+            QT.maxTime = Just maxTime,
+            QT.oracle = maybeOracle
             }
       case style of
         I.EXPRESS -> do
