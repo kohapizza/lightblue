@@ -73,11 +73,15 @@ structural = M.fromList [
   -- phrases and clauses
   ("Sentence", lam s (var s))                                    -- S -> Phr
   , ("UseCl", lam t $ lam pl $ lam c $ var c)                    -- Temp -> Pol -> Cl -> S
-  , ("PredVP", lam np $ lam vp $ app (var np) (var vp))          -- NP -> VP -> Cl
+  , ("PredVP", lam np $ lam vp $                                 -- NP -> VP -> Cl
+      app (UwN.Proj UwN.Snd (var np)) (var vp))
   -- noun phrases
   , ("UseN", lam p $ var p)                                      -- N -> CN
-  , ("DetCN", lam d $ lam p $ app (var d) (var p))               -- Det -> CN -> NP
-  , ("UsePN", lam x $ lam p $ app (var p) (var x))               -- PN -> NP
+  , ("DetCN", lam d $ lam p $                                    -- Det -> CN -> NP
+      UwN.Pair (var p) (app (var d) (var p)))
+  , ("UsePN", lam x $ UwN.Pair                                   -- PN -> NP
+      (lam y (UwN.Eq UwN.Entity (var y) (var x)))
+      (lam p (app (var p) (var x))))
   , ("DetQuant", lam q $ lam n $ var q)                          -- Quant -> Num -> Det
   , ("IndefArt", lam p $ lam q $                                 -- Quant
       UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x))))
@@ -122,6 +126,20 @@ structural = M.fromList [
   , ("AdAP", lam a $ lam p $ lam x $                             -- AdA -> AP -> AP
       UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
   , ("PositAdvAdj", lam a $ var a)                               -- A -> Adv
+  -- Predeterminers act on the enriched noun phrase: all_Predet rebuilds
+  -- universal force from the restrictor, which is why noun phrases carry
+  -- one (the pair never reaches the prover: projections disappear under
+  -- beta reduction).  "at least" keeps the lower-bound reading of its
+  -- noun phrase; "most" falls back to it, joining the existential
+  -- approximations of the cardinality determiners.
+  , ("PredetNP", lam d $ lam np $ app (var d) (var np))          -- Predet -> NP -> NP
+  , ("all_Predet", lam np $ UwN.Pair                             -- Predet
+      (UwN.Proj UwN.Fst (var np))
+      (lam q $ UwN.Pi x UwN.Entity
+        (UwN.Pi u (app (UwN.Proj UwN.Fst (var np)) (var x))
+          (app (var q) (var x)))))
+  , ("at_least_Predet", lam np $ var np)                         -- Predet
+  , ("most_Predet", lam np $ var np)                             -- Predet
   -- relative clauses: a restrictive relative is one more intersective
   -- restriction on the noun, and the relative pronoun adds nothing
   , ("IdRP", lam p $ var p)                                      -- RP
@@ -135,30 +153,33 @@ structural = M.fromList [
   , ("CompAP", lam a $ var a)                                    -- AP -> Comp
   , ("CompAdv", lam a $ var a)                                   -- Adv -> Comp
   -- "there is NP": the noun phrase applied to the trivial property
-  , ("ExistNP", lam np $ app (var np) (lam x UwN.Top))           -- NP -> Cl
+  , ("ExistNP", lam np $                                         -- NP -> Cl
+      app (UwN.Proj UwN.Snd (var np)) (lam x UwN.Top))
   -- prepositions are two place relations between the subject and the
   -- object of the preposition
   , ("PrepNP", lam p $ lam np $ lam x $                          -- Prep -> NP -> Adv
-      app (var np) (lam y (app (app (var p) (var y)) (var x))))
+      app (UwN.Proj UwN.Snd (var np)) (lam y (app (app (var p) (var y)) (var x))))
   -- a bare mass noun is read existentially, like the bare plurals
-  , ("MassNP", lam n $ lam q $                                   -- CN -> NP
-      UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var n) (var x)) (app (var q) (var x))))
+  , ("MassNP", lam n $ UwN.Pair (var n) (lam q $                 -- CN -> NP
+      UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var n) (var x)) (app (var q) (var x)))))
   , ("SlashV2a", lam v $ lam np $ lam x $                        -- V2 -> VPSlash
-      app (var np) (lam y (app (app (var v) (var y)) (var x))))
+      app (UwN.Proj UwN.Snd (var np)) (lam y (app (app (var v) (var y)) (var x))))
   , ("ComplSlash", lam vs $ lam np $ app (var vs) (var np))      -- VPSlash -> NP -> VP
   , ("UseV", lam v $ var v)                                      -- V -> VP
   , ("Slash3V3", lam v $ lam np $ lam q $ lam x $                -- V3 -> NP -> VPSlash
-      app (var q) (lam y (app (var np) (lam z
+      app (UwN.Proj UwN.Snd (var q)) (lam y (app (UwN.Proj UwN.Snd (var np)) (lam z
         (app (app (app (var v) (var y)) (var z)) (var x))))))
   -- "be NP": the subject is identified with a witness of the noun phrase
   , ("CompNP", lam np $ lam x $                                  -- NP -> Comp
-      app (var np) (lam y (UwN.Eq UwN.Entity (var y) (var x))))
+      app (UwN.Proj UwN.Snd (var np)) (lam y (UwN.Eq UwN.Entity (var y) (var x))))
   -- past participles restrict the noun phrase: "the results published"
   -- are results which someone published
-  , ("PPartNP", lam np $ lam v $ lam q $                         -- NP -> V2 -> NP
-      app (var np) (lam x (UwN.Sigma u
+  , ("PPartNP", lam np $ lam v $ UwN.Pair                        -- NP -> V2 -> NP
+      (lam x (UwN.Sigma u (app (UwN.Proj UwN.Fst (var np)) (var x))
+        (UwN.Sigma y UwN.Entity (app (app (var v) (var x)) (var y)))))
+      (lam q (app (UwN.Proj UwN.Snd (var np)) (lam x (UwN.Sigma u
         (UwN.Sigma y UwN.Entity (app (app (var v) (var x)) (var y)))
-        (app (var q) (var x)))))
+        (app (var q) (var x)))))))
   , ("ComplVV", lam v $ lam vp $ app (var v) (var vp))           -- VV -> VP -> VP
   -- Verb phrase adverbs are read as predicates of the subject, conjoined
   -- with the verb phrase; without an event argument this is as close as
