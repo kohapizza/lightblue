@@ -44,10 +44,18 @@ data Case = Case {
 
 cases :: [Case]
 cases = [
-  Case { caseName = "fracas_029", caseProblem = 29, expected = GFTB.Yes }
+  Case { caseName = "fracas_022", caseProblem = 22, expected = GFTB.Unknown }
+  , Case { caseName = "fracas_023", caseProblem = 23, expected = GFTB.Yes }
+  , Case { caseName = "fracas_029", caseProblem = 29, expected = GFTB.Yes }
+  , Case { caseName = "fracas_038", caseProblem = 38, expected = GFTB.No }
+  , Case { caseName = "fracas_039", caseProblem = 39, expected = GFTB.Unknown }
   , Case { caseName = "fracas_045", caseProblem = 45, expected = GFTB.Unknown }
   , Case { caseName = "fracas_049", caseProblem = 49, expected = GFTB.Yes }
+  , Case { caseName = "fracas_054", caseProblem = 54, expected = GFTB.Unknown }
+  , Case { caseName = "fracas_055", caseProblem = 55, expected = GFTB.Yes }
   , Case { caseName = "fracas_065", caseProblem = 65, expected = GFTB.Unknown }
+  , Case { caseName = "fracas_070", caseProblem = 70, expected = GFTB.No }
+  , Case { caseName = "fracas_071", caseProblem = 71, expected = GFTB.Unknown }
   ]
 
 -- | The proof search runs with the defaults of the @gf@ command of
