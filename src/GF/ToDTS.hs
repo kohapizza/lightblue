@@ -86,16 +86,44 @@ structural = M.fromList [
   -- restrictor holds of exactly two entities is left to the @ machinery.
   , ("both_Det", lam p $ lam q $                                 -- Det
       UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (app (var q) (var x))))
+  , ("each_Det", lam p $ lam q $                                 -- Det
+      UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (app (var q) (var x))))
+  -- The cardinality determiners are approximated existentially, which keeps
+  -- their upward entailments and stays silent on the counts they state.
+  , ("many_Det", existential), ("several_Det", existential)      -- Det
+  , ("a_few_Det", existential), ("a_lot_of_Det", existential)    -- Det
+  -- "neither" is "no" restricted to two: the universal denial is kept and
+  -- the two-ness presupposition is left to the @ machinery.
+  , ("neither_Det", lam p $ lam q $                              -- Det
+      UwN.Pi x UwN.Entity (UwN.Pi u (app (var p) (var x)) (UwN.Pi y (app (var q) (var x)) UwN.Bot)))
   -- adjectival modification, read intersectively
   , ("PositA", lam a $ var a)                                    -- A -> AP
   , ("AdjCN", lam a $ lam p $ lam x $                            -- AP -> CN -> CN
       UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
+  -- Degree adverbs are read as one more predicate of the modified entity,
+  -- which keeps "really A" strictly stronger than "A".
+  , ("AdAP", lam a $ lam p $ lam x $                             -- AdA -> AP -> AP
+      UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
+  , ("PositAdvAdj", lam a $ var a)                               -- A -> Adv
   -- verb phrases
   , ("UseComp", lam co $ var co)                                 -- Comp -> VP
   , ("CompCN", lam p $ var p)                                    -- CN -> Comp
   , ("SlashV2a", lam v $ lam np $ lam x $                        -- V2 -> VPSlash
       app (var np) (lam y (app (app (var v) (var y)) (var x))))
   , ("ComplSlash", lam vs $ lam np $ app (var vs) (var np))      -- VPSlash -> NP -> VP
+  , ("UseV", lam v $ var v)                                      -- V -> VP
+  , ("Slash3V3", lam v $ lam np $ lam q $ lam x $                -- V3 -> NP -> VPSlash
+      app (var q) (lam y (app (var np) (lam z
+        (app (app (app (var v) (var y)) (var z)) (var x))))))
+  -- "be NP": the subject is identified with a witness of the noun phrase
+  , ("CompNP", lam np $ lam x $                                  -- NP -> Comp
+      app (var np) (lam y (UwN.Eq UwN.Entity (var y) (var x))))
+  -- past participles restrict the noun phrase: "the results published"
+  -- are results which someone published
+  , ("PPartNP", lam np $ lam v $ lam q $                         -- NP -> V2 -> NP
+      app (var np) (lam x (UwN.Sigma u
+        (UwN.Sigma y UwN.Entity (app (app (var v) (var x)) (var y)))
+        (app (var q) (var x)))))
   , ("ComplVV", lam v $ lam vp $ app (var v) (var vp))           -- VV -> VP -> VP
   -- "used to" marks tense and aspect, which the fragment ignores, so it
   -- denotes the identity on verb phrases.  Intensional complement verbs
@@ -107,6 +135,12 @@ structural = M.fromList [
   , ("Past", UwN.Unit)
   , ("Present", UwN.Unit)
   ]
+
+-- | Existential quantification: the reading the fragment gives "some" like
+-- determiners whose cardinality it cannot state.
+existential :: UwN.Preterm
+existential = lam p $ lam q $
+  UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var p) (var x)) (app (var q) (var x)))
 
 -- | The signature of the constants which the translation of the given trees introduces.
 -- | The arity of a content word is read off its category tag, so that a two place verb such as @win_V2@ is given the type
@@ -124,6 +158,7 @@ signatureOf exprs = M.toList $ M.fromList
     types = [("PN", DTT.Entity)                     -- a proper name denotes an entity
             ,("N", nPlacePred 1), ("A", nPlacePred 1)
             ,("V", nPlacePred 1), ("Adv", nPlacePred 1)
+            ,("AdA", nPlacePred 1)
             ,("N2", nPlacePred 2), ("A2", nPlacePred 2), ("V2", nPlacePred 2)
             ,("V3", nPlacePred 3)]
     nPlacePred k = iterate (DTT.Pi DTT.Entity) DTT.Type !! k
@@ -139,11 +174,11 @@ lexical :: String -> Maybe U.Preterm
 lexical name = case splitTag name of
   Just (stem, tag) | tag `elem` contentTags -> Just $ U.Con $ T.pack stem
   _ -> Nothing
-  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv"]
+  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv", "AdA"]
 
 -- variable names, kept distinct within each interpretation
 
-a, c, co, d, n, np, p, pl, q, s, t, u, v, vp, vs, x, y :: UwN.VarName
+a, c, co, d, n, np, p, pl, q, s, t, u, v, vp, vs, x, y, z :: UwN.VarName
 a = UwN.VarName 'a' 0
 c = UwN.VarName 'c' 0
 co = UwN.VarName 'C' 0
@@ -161,6 +196,7 @@ vp = UwN.VarName 'V' 0
 vs = UwN.VarName 'S' 0
 x = UwN.VarName 'x' 0
 y = UwN.VarName 'y' 0
+z = UwN.VarName 'z' 0
 
 lam :: UwN.VarName -> UwN.Preterm -> UwN.Preterm
 lam = UwN.Lam
