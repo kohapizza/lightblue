@@ -12,7 +12,7 @@ Translation from GF abstract syntax trees (@PGF.Expr@) into UDTT pretermes.
   A, AP                   Entity -> type
   NP                      (Entity -> type) -> type
   Det, Quant              (Entity -> type) -> (Entity -> type) -> type
-  V2                      Entity -> Entity -> type
+  V2, Prep                Entity -> Entity -> type
   VV                      (Entity -> type) -> Entity -> type
   VPSlash                 ((Entity -> type) -> type) -> Entity -> type
   Cl, S, Phr              type
@@ -93,6 +93,16 @@ structural = M.fromList [
   -- verb phrases
   , ("UseComp", lam co $ var co)                                 -- Comp -> VP
   , ("CompCN", lam p $ var p)                                    -- CN -> Comp
+  , ("CompAdv", lam a $ var a)                                   -- Adv -> Comp
+  -- "there is NP": the noun phrase applied to the trivial property
+  , ("ExistNP", lam np $ app (var np) (lam x UwN.Top))           -- NP -> Cl
+  -- prepositions are two place relations between the subject and the
+  -- object of the preposition
+  , ("PrepNP", lam p $ lam np $ lam x $                          -- Prep -> NP -> Adv
+      app (var np) (lam y (app (app (var p) (var y)) (var x))))
+  -- a bare mass noun is read existentially, like the bare plurals
+  , ("MassNP", lam n $ lam q $                                   -- CN -> NP
+      UwN.Sigma x UwN.Entity (UwN.Sigma u (app (var n) (var x)) (app (var q) (var x))))
   , ("SlashV2a", lam v $ lam np $ lam x $                        -- V2 -> VPSlash
       app (var np) (lam y (app (app (var v) (var y)) (var x))))
   , ("ComplSlash", lam vs $ lam np $ app (var vs) (var np))      -- VPSlash -> NP -> VP
@@ -125,6 +135,7 @@ signatureOf exprs = M.toList $ M.fromList
             ,("N", nPlacePred 1), ("A", nPlacePred 1)
             ,("V", nPlacePred 1), ("Adv", nPlacePred 1)
             ,("N2", nPlacePred 2), ("A2", nPlacePred 2), ("V2", nPlacePred 2)
+            ,("Prep", nPlacePred 2)
             ,("V3", nPlacePred 3)]
     nPlacePred k = iterate (DTT.Pi DTT.Entity) DTT.Type !! k
 
@@ -139,7 +150,7 @@ lexical :: String -> Maybe U.Preterm
 lexical name = case splitTag name of
   Just (stem, tag) | tag `elem` contentTags -> Just $ U.Con $ T.pack stem
   _ -> Nothing
-  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv"]
+  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv", "Prep"]
 
 -- variable names, kept distinct within each interpretation
 
