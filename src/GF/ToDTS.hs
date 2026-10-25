@@ -118,6 +118,12 @@ structural = M.fromList [
   -- "be NP": the subject is identified with a witness of the noun phrase
   , ("CompNP", lam np $ lam x $                                  -- NP -> Comp
       app (var np) (lam y (UwN.Eq UwN.Entity (var y) (var x))))
+  -- past participles restrict the noun phrase: "the results published"
+  -- are results which someone published
+  , ("PPartNP", lam np $ lam v $ lam q $                         -- NP -> V2 -> NP
+      app (var np) (lam x (UwN.Sigma u
+        (UwN.Sigma y UwN.Entity (app (app (var v) (var x)) (var y)))
+        (app (var q) (var x)))))
   , ("ComplVV", lam v $ lam vp $ app (var v) (var vp))           -- VV -> VP -> VP
   -- "used to" marks tense and aspect, which the fragment ignores, so it
   -- denotes the identity on verb phrases.  Intensional complement verbs
