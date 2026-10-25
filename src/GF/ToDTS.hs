@@ -126,12 +126,35 @@ structural = M.fromList [
   , ("AdAP", lam a $ lam p $ lam x $                             -- AdA -> AP -> AP
       UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
   , ("PositAdvAdj", lam a $ var a)                               -- A -> Adv
+  , ("AdvCN", lam p $ lam a $ lam x $                            -- CN -> Adv -> CN
+      UwN.Sigma u (app (var p) (var x)) (app (var a) (var x)))
+  , ("AdvAP", lam p $ lam a $ lam x $                            -- AP -> Adv -> AP
+      UwN.Sigma u (app (var p) (var x)) (app (var a) (var x)))
   -- Predeterminers act on the enriched noun phrase: all_Predet rebuilds
   -- universal force from the restrictor, which is why noun phrases carry
   -- one (the pair never reaches the prover: projections disappear under
   -- beta reduction).  "at least" keeps the lower-bound reading of its
   -- noun phrase; "most" falls back to it, joining the existential
   -- approximations of the cardinality determiners.
+  -- a bare determiner quantifies over the trivial restrictor ("one ...")
+  , ("DetNP", lam d $ UwN.Pair                                   -- Det -> NP
+      (lam y UwN.Top) (app (var d) (lam y UwN.Top)))
+  , ("AdvNP", lam np $ lam a $ UwN.Pair                          -- NP -> Adv -> NP
+      (lam x (UwN.Sigma u (app (UwN.Proj UwN.Fst (var np)) (var x)) (app (var a) (var x))))
+      (lam q (app (UwN.Proj UwN.Snd (var np)) (lam x
+        (UwN.Sigma u (app (var a) (var x)) (app (var q) (var x)))))))
+  -- PROTOTYPE: the possessive presupposes its possessor, but nesting one
+  -- underspecified term inside another defeats the global accommodation of
+  -- GF.Inference, so the possessor is dropped: "the world's greatest tenor"
+  -- is read as "the greatest tenor".  Iterated accommodation is future work.
+  , ("GenNP", lam np $ lam p $ lam q $                           -- NP -> Quant
+      app (var q) (UwN.Proj UwN.Fst
+        (UwN.Asp (UwN.Sigma x UwN.Entity (app (var p) (var x))))))
+  , ("DetQuantOrd", lam d $ lam n $ lam o $ lam p $              -- Quant -> Num -> Ord -> Det
+      app (var d) (lam x (UwN.Sigma u (app (var o) (var x)) (app (var p) (var x)))))
+  -- PROTOTYPE: the superlative is read as its positive, pending a
+  -- treatment of comparison.
+  , ("OrdSuperl", lam a $ var a)                                 -- A -> Ord
   , ("PredetNP", lam d $ lam np $ app (var d) (var np))          -- Predet -> NP -> NP
   , ("all_Predet", lam np $ UwN.Pair                             -- Predet
       (UwN.Proj UwN.Fst (var np))
@@ -190,14 +213,34 @@ structural = M.fromList [
   -- denotes the identity on verb phrases.  Intensional complement verbs
   -- such as want_VV are deliberately left out.
   , ("use_VV", lam vp $ var vp)                                  -- VV
+  -- PROTOTYPE: "can" is read transparently, which overgenerates in
+  -- principle (can P would entail P); the right-to problems only need the
+  -- phrase to translate uniformly.  A modal treatment is future work.
+  , ("can_VV", lam vp $ var vp)                                  -- VV
+  -- PROTOTYPE: the content of "the right to P" is applied to the right
+  -- itself, which is absurd but deterministic: distinct contents stay
+  -- distinct and identical phrases translate identically.  A proper
+  -- intensional treatment is future work.
+  , ("EmbedVP", lam vp $ var vp)                                 -- VP -> SC
+  , ("ComplN2", lam n $ lam np $ lam x $                         -- N2 -> NP -> CN
+      app (UwN.Proj UwN.Snd (var np)) (lam y (app (app (var n) (var y)) (var x))))
+  , ("SentCN", lam n $ lam c $ lam x $                           -- CN -> SC -> CN
+      UwN.Sigma u (app (var n) (var x)) (app (var c) (var x)))
   -- The fragment ignores number, polarity and tense.  Ignoring number
   -- reads a bare plural existentially; the generic reading some premises
   -- call for (e.g. problem 013) is a known limitation.
   , ("NumSg", UwN.Unit)
   , ("NumPl", UwN.Unit)
+  -- PROTOTYPE: cardinalities are ignored, so "three N" is read as bare
+  -- existential; sound only as a lower bound (under at_least).  at_most
+  -- is deliberately left unsupported, since the reading would be unsound.
+  , ("NumCard", lam n $ UwN.Unit)
+  , ("NumNumeral", lam n $ UwN.Unit)
+  , ("N_two", UwN.Unit), ("N_three", UwN.Unit), ("N_ten", UwN.Unit)
   , ("PPos", UwN.Unit)
   , ("Past", UwN.Unit)
   , ("Present", UwN.Unit)
+  , ("Future", UwN.Unit)
   ]
 
 -- | Existential quantification: the reading the fragment gives "some" like
@@ -210,7 +253,8 @@ existential = lam p $ lam q $
 -- | The arity of a content word is read off its category tag, so that a two place verb such as @win_V2@ is given the type
 -- @entity -> entity -> type@.
 signatureOf :: [PGF.Expr] -> DTT.Signature
-signatureOf exprs = M.toList $ M.fromList
+signatureOf exprs = M.toList $ M.fromList $
+  [ ("of", nPlacePred 2) ] ++
   [ (T.pack stem, typ)
   | name <- concatMap names exprs
   , (stem, tag) <- maybe [] (:[]) (splitTag name)
@@ -222,8 +266,9 @@ signatureOf exprs = M.toList $ M.fromList
     types = [("PN", DTT.Entity)                     -- a proper name denotes an entity
             ,("N", nPlacePred 1), ("A", nPlacePred 1)
             ,("V", nPlacePred 1), ("Adv", nPlacePred 1)
-            ,("AdA", nPlacePred 1)
-            ,("N2", nPlacePred 2), ("A2", nPlacePred 2), ("V2", nPlacePred 2)
+            ,("AdA", nPlacePred 1), ("VP", nPlacePred 1)
+            ,("N2", nPlacePred 1)  -- decomposed: the bare noun plus "of"
+            ,("A2", nPlacePred 2), ("V2", nPlacePred 2)
             ,("Prep", nPlacePred 2)
             ,("V3", nPlacePred 3)]
     nPlacePred k = iterate (DTT.Pi DTT.Entity) DTT.Type !! k
@@ -235,15 +280,21 @@ splitTag name = case break (== '_') (reverse name) of
   _ -> Nothing
 
 -- | Content words are interpreted as constants of the same name.  Function words are excluded, since they call for an interpretation of their own.
+-- A relational noun is decomposed into the bare noun and a generic "of"
+-- relation to its complement, so that "Nobel prize for literature" entails
+-- "Nobel prize" and the N and N2 readings of one stem share a constant.
 lexical :: String -> Maybe U.Preterm
 lexical name = case splitTag name of
+  Just (stem, "N2") -> Just $ U.Lam $ U.Lam $
+    U.Sigma (U.App (U.Con (T.pack stem)) (U.Var 0))
+            (U.App (U.App (U.Con "of") (U.Var 1)) (U.Var 2))
   Just (stem, tag) | tag `elem` contentTags -> Just $ U.Con $ T.pack stem
   _ -> Nothing
-  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv", "AdA", "Prep"]
+  where contentTags = ["N", "N2", "A", "A2", "V", "V2", "V3", "PN", "Adv", "AdA", "Prep", "VP"]
 
 -- variable names, kept distinct within each interpretation
 
-a, c, co, d, n, np, p, pl, q, r, s, t, u, v, vp, vs, x, y, z :: UwN.VarName
+a, c, co, d, n, np, o, p, pl, q, r, s, t, u, v, vp, vs, x, y, z :: UwN.VarName
 a = UwN.VarName 'a' 0
 c = UwN.VarName 'c' 0
 r = UwN.VarName 'r' 0
@@ -251,6 +302,7 @@ co = UwN.VarName 'C' 0
 d = UwN.VarName 'd' 0
 n = UwN.VarName 'n' 0
 np = UwN.VarName 'N' 0
+o = UwN.VarName 'o' 0
 p = UwN.VarName 'p' 0
 pl = UwN.VarName 'l' 0
 q = UwN.VarName 'q' 0
