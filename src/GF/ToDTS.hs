@@ -9,7 +9,8 @@ Translation from GF abstract syntax trees (@PGF.Expr@) into UDTT pretermes.
 @
   PN                      Entity
   N, CN, VP, Comp         Entity -> type
-  A, AP                   Entity -> type
+  A, AP, RCl, RS          Entity -> type
+  RP                      (Entity -> type) -> Entity -> type
   NP                      (Entity -> type) -> type
   Det, Quant              (Entity -> type) -> (Entity -> type) -> type
   V2                      Entity -> Entity -> type
@@ -90,9 +91,17 @@ structural = M.fromList [
   , ("PositA", lam a $ var a)                                    -- A -> AP
   , ("AdjCN", lam a $ lam p $ lam x $                            -- AP -> CN -> CN
       UwN.Sigma u (app (var a) (var x)) (app (var p) (var x)))
+  -- relative clauses: a restrictive relative is one more intersective
+  -- restriction on the noun, and the relative pronoun adds nothing
+  , ("IdRP", lam p $ var p)                                      -- RP
+  , ("RelVP", lam r $ lam vp $ app (var r) (var vp))             -- RP -> VP -> RCl
+  , ("UseRCl", lam t $ lam pl $ lam c $ var c)                   -- Temp -> Pol -> RCl -> RS
+  , ("RelCN", lam p $ lam c $ lam x $                            -- CN -> RS -> CN
+      UwN.Sigma u (app (var p) (var x)) (app (var c) (var x)))
   -- verb phrases
   , ("UseComp", lam co $ var co)                                 -- Comp -> VP
   , ("CompCN", lam p $ var p)                                    -- CN -> Comp
+  , ("CompAP", lam a $ var a)                                    -- AP -> Comp
   , ("SlashV2a", lam v $ lam np $ lam x $                        -- V2 -> VPSlash
       app (var np) (lam y (app (app (var v) (var y)) (var x))))
   , ("ComplSlash", lam vs $ lam np $ app (var vs) (var np))      -- VPSlash -> NP -> VP
@@ -101,8 +110,11 @@ structural = M.fromList [
   -- denotes the identity on verb phrases.  Intensional complement verbs
   -- such as want_VV are deliberately left out.
   , ("use_VV", lam vp $ var vp)                                  -- VV
-  -- the fragment ignores number, polarity and tense
+  -- The fragment ignores number, polarity and tense.  Ignoring number
+  -- reads a bare plural existentially; the generic reading some premises
+  -- call for (e.g. problem 013) is a known limitation.
   , ("NumSg", UwN.Unit)
+  , ("NumPl", UwN.Unit)
   , ("PPos", UwN.Unit)
   , ("Past", UwN.Unit)
   , ("Present", UwN.Unit)
@@ -143,9 +155,10 @@ lexical name = case splitTag name of
 
 -- variable names, kept distinct within each interpretation
 
-a, c, co, d, n, np, p, pl, q, s, t, u, v, vp, vs, x, y :: UwN.VarName
+a, c, co, d, n, np, p, pl, q, r, s, t, u, v, vp, vs, x, y :: UwN.VarName
 a = UwN.VarName 'a' 0
 c = UwN.VarName 'c' 0
+r = UwN.VarName 'r' 0
 co = UwN.VarName 'C' 0
 d = UwN.VarName 'd' 0
 n = UwN.VarName 'n' 0
