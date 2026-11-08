@@ -132,17 +132,20 @@ infer prover nProof verbose translation = do
     -- sentence checked last comes first).  Underspecified terms resolve
     -- against that context during the check; when the check of a premise
     -- fails, its closed presuppositions are accommodated: added to the
-    -- context, and the check is run once more.  The hypothesis is never
-    -- accommodated, since an assumption added for its own presupposition
-    -- could feed the proof of the hypothesis itself.
+    -- context, and the check is run once more.  The hypothesis is no
+    -- exception, as in 'DTS.NaturalLanguageInference.sequentialTypeCheck',
+    -- where every sentence is just the next sentence of the discourse:
+    -- accommodating a presupposition supplies an entity, not the assertion
+    -- about it, so the hypothesis does not become provable by its own
+    -- presupposition (the accommodation is still recorded, so that an
+    -- evaluation can report it).
     felicityCheck ctx accs checks [] = return $ Right (ctx, reverse accs, reverse checks)
     felicityCheck ctx accs checks (sentence:rest) = do
       first <- runCheck ctx sentence
       case first of
         Just check -> felicityCheck (typeOf check : ctx) accs (check : checks) rest
         Nothing
-          | role sentence /= "Hypothesis"
-          , presups@(_:_) <- closedPresuppositions (preterm sentence) -> do
+          | presups@(_:_) <- closedPresuppositions (preterm sentence) -> do
               let ctx' = presups ++ ctx
               retry <- runCheck ctx' sentence
               case retry of
