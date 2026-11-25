@@ -15,13 +15,21 @@ module GF.Inference (
   Sentence(..)
   , Translation(..)
   , translateProblem
+  -- * Felicity checks
+  , FelicityCheck(..)
+  , Discourse(..)
+  , Branch(..)
+  , discourse
   -- * Inference
   , Verdict(..)
   , Result(..)
-  , FelicityCheck(..)
+  , paths
+  , verdictOf
+  , inferAll
   , infer
   ) where
 
+import Control.Monad.IO.Class (liftIO)    --base
 import qualified Data.List as L           --base
 import qualified ListT                    --list-t
 import qualified PGF                      --gf
@@ -62,17 +70,80 @@ translateProblem problem = do
                        Right preterm' -> Right preterm'
                        Left err -> Left $ show err ++ " in " ++ PGF.showExpr [] expr
 
--- | The outcome of running a problem.
-data Verdict =
-  Infelicitous String  -- ^ The named sentence yielded no type check diagram.
-  | Felicitous Result
-
 -- | The semantic felicity check of one sentence.
 data FelicityCheck = FelicityCheck {
   checkedRole :: String            -- ^ The role of the sentence checked
   , checkQuery :: U.TypeCheckQuery -- ^ The judgment built before the check
   , checkDiagram :: QT.DTTProofDiagram
   }
+
+-- | The felicity checks of a discourse as a tree, as
+-- 'DTS.NaturalLanguageInference.ParseResult' without the level of parse
+-- trees, since the treebank gives one tree per sentence.  Each result of the
+-- check of a sentence is a branch, and becomes the context of the rest of the
+-- discourse on that branch.  The branches are computed only when a caller
+-- walks them.
+data Discourse =
+  Next Sentence (ListT.ListT IO Branch)
+  -- ^ The next sentence, and the results of its felicity check.
+  | Final DTT.ProofSearchQuery DTT.ProofSearchQuery
+  -- ^ The queries which ask for the hypothesis and for its negation.
+  | NoSentence
+
+-- | One result of the felicity check of a sentence.
+data Branch = Branch {
+  branchCheck :: FelicityCheck
+  , branchAccommodated :: [DTT.Preterm]
+  -- ^ The presuppositions added to the context for this result, if any.
+  , branchRest :: Discourse
+  -- ^ The rest of the discourse, in the context this result extends.
+  }
+
+-- | Checks each sentence in the context the previous ones built (the sentence
+-- checked last comes first), keeping up to the given number of results per
+-- sentence (a negative value: all).  Underspecified terms resolve against that
+-- context during the check.  When the check of a sentence yields no result on
+-- a branch, its closed presuppositions are accommodated on that branch: added
+-- to the context, and the check is run once more.  The hypothesis is no
+-- exception, as in 'DTS.NaturalLanguageInference.sequentialTypeCheck', where
+-- every sentence is just the next sentence of the discourse: accommodating a
+-- presupposition supplies an entity, not the assertion about it, so the
+-- hypothesis does not become provable by its own presupposition (the
+-- accommodation is still recorded, so that an evaluation can report it).
+discourse :: QT.Prover
+             -> Int   -- ^ How many type check results to keep per sentence
+             -> Bool  -- ^ Whether to log the type checking
+             -> DTT.Signature
+             -> DTT.Context
+             -> [Sentence]
+             -> Discourse
+discourse _ _ _ sig ctx [] = case ctx of
+  [] -> NoSentence
+  (hypo:prems) -> Final (DTT.ProofSearchQuery sig prems hypo)
+                        (DTT.ProofSearchQuery sig prems $ DTT.Pi hypo DTT.Bot)
+discourse prover nTypeCheck verbose sig ctx (sentence:rest) =
+  Next sentence $ do
+    (presups, ctx', check) <- candidates
+    let ctx'' = DTT.trm (Tree.node (checkDiagram check)) : ctx'
+    return $ Branch check presups (discourse prover nTypeCheck verbose sig ctx'' rest)
+  where
+    candidates = do
+      first <- liftIO $ ListT.uncons $ checksIn ctx
+      case first of
+        Just (check, more) -> fmap (\c -> ([], ctx, c)) $ ListT.cons check more
+        Nothing -> case closedPresuppositions (preterm sentence) of
+          [] -> ListT.fromFoldable []
+          presups -> let ctx' = presups ++ ctx
+                     in fmap (\c -> (presups, ctx', c)) $ checksIn ctx'
+    checksIn c =
+      let query = U.Judgment sig c (preterm sentence) DTT.Type
+      in fmap (FelicityCheck (role sentence) query)
+              $ takeNbest nTypeCheck $ TY.typeCheck prover verbose query
+
+-- | The outcome of running a problem.
+data Verdict =
+  Infelicitous String  -- ^ The named sentence yielded no type check diagram.
+  | Felicitous Result
 
 -- | Every query and diagram the inference builds, so that a caller can show them.
 data Result = Result {
@@ -86,7 +157,7 @@ data Result = Result {
   , felicityChecks :: [FelicityCheck]
   -- ^ One per sentence, in the order the sentences are given.
   , accommodations :: [(String, [DTT.Preterm])]
-  -- ^ The premises whose felicity check succeeded only after their
+  -- ^ The sentences whose felicity check succeeded only after their
   -- presuppositions were added to the context, with the types added.
   , positive :: (DTT.ProofSearchQuery, [QT.DTTProofDiagram])
   -- ^ The query which asks for the hypothesis, and the proofs found.
@@ -94,70 +165,80 @@ data Result = Result {
   -- ^ The query which asks for its negation, and the proofs found.
   }
 
--- | Checks the semantic felicity of each sentence in turn, and then asks the
--- prover whether the premises prove the hypothesis, and whether they refute it.
-infer :: QT.Prover
+-- | Walks the tree depth first, and asks the prover at the end of each path.
+-- A path on which a sentence yields no result ends with the role of that
+-- sentence.
+paths :: QT.Prover
          -> Int   -- ^ How many proof diagrams to keep (a negative value: all)
-         -> Bool  -- ^ Whether to log the type checking
-         -> Translation
-         -> IO Verdict
-infer prover nProof verbose translation = do
-    checked <- felicityCheck [] [] [] (sentences translation)
-    case checked of
-      Left name -> return $ Infelicitous name
-      Right (ctx, accs, checks) -> case ctx of
-        [] -> return $ Infelicitous "(no sentence)"
-        terms@(hypo:prems) -> do
-          let psqPos = DTT.ProofSearchQuery sig prems hypo
-              psqNeg = DTT.ProofSearchQuery sig prems $ DTT.Pi hypo DTT.Bot
-          proofs <- takeNbest $ prover psqPos
-          refutations <- takeNbest $ prover psqNeg
-          return $ Felicitous Result {
-              answer = answerOf proofs refutations
-            , contxt = terms
-            , felicityChecks = checks
-            , accommodations = accs
-            , positive = (psqPos, proofs)
-            , negative = (psqNeg, refutations)
-            }
+         -> Discourse
+         -> ListT.ListT IO (Either String Result)
+paths prover nProof = go [] []
   where
-    sig = signature translation
-    takeNbest = ListT.toList . (if nProof >= 0 then ListT.take nProof else id)
-    typeOf = DTT.trm . Tree.node . checkDiagram
+    go _ _ NoSentence = ListT.fromFoldable [Left "(no sentence)"]
+    go checks accs (Next sentence branches) = do
+      first <- liftIO $ ListT.uncons branches
+      case first of
+        Nothing -> return $ Left $ role sentence
+        Just (branch, more) -> do
+          Branch check presups rest <- ListT.cons branch more
+          let accs' = if null presups then accs else (role sentence, presups) : accs
+          go (check : checks) accs' rest
+    go checks accs (Final psqPos psqNeg@(DTT.ProofSearchQuery _ prems _)) = liftIO $ do
+      proofs <- ListT.toList $ takeNbest nProof $ prover psqPos
+      refutations <- ListT.toList $ takeNbest nProof $ prover psqNeg
+      let DTT.ProofSearchQuery _ _ hypo = psqPos
+      return $ Right Result {
+          answer = answerOf proofs refutations
+        , contxt = hypo : prems
+        , felicityChecks = reverse checks
+        , accommodations = reverse accs
+        , positive = (psqPos, proofs)
+        , negative = (psqNeg, refutations)
+        }
     answerOf proofs refutations
       | not (null proofs) = TB.Yes
       | not (null refutations) = TB.No
       | otherwise = TB.Unknown
-    -- | Checks each sentence in the context the previous ones built (the
-    -- sentence checked last comes first).  Underspecified terms resolve
-    -- against that context during the check; when the check of a premise
-    -- fails, its closed presuppositions are accommodated: added to the
-    -- context, and the check is run once more.  The hypothesis is no
-    -- exception, as in 'DTS.NaturalLanguageInference.sequentialTypeCheck',
-    -- where every sentence is just the next sentence of the discourse:
-    -- accommodating a presupposition supplies an entity, not the assertion
-    -- about it, so the hypothesis does not become provable by its own
-    -- presupposition (the accommodation is still recorded, so that an
-    -- evaluation can report it).
-    felicityCheck ctx accs checks [] = return $ Right (ctx, reverse accs, reverse checks)
-    felicityCheck ctx accs checks (sentence:rest) = do
-      first <- runCheck ctx sentence
-      case first of
-        Just check -> felicityCheck (typeOf check : ctx) accs (check : checks) rest
-        Nothing
-          | presups@(_:_) <- closedPresuppositions (preterm sentence) -> do
-              let ctx' = presups ++ ctx
-              retry <- runCheck ctx' sentence
-              case retry of
-                Just check -> felicityCheck (typeOf check : ctx')
-                                            ((role sentence, presups) : accs)
-                                            (check : checks) rest
-                Nothing -> return $ Left $ role sentence
-          | otherwise -> return $ Left $ role sentence
-    runCheck ctx sentence = do
-      let query = U.Judgment sig ctx (preterm sentence) DTT.Type
-      diagrams <- ListT.uncons $ TY.typeCheck prover verbose query
-      return $ fmap (FelicityCheck (role sentence) query . fst) diagrams
+
+-- | The verdict of a problem from the outcomes of its paths: the first path
+-- which reaches the prover, as 'DTS.NaturalLanguageInference.trawlParseResult'
+-- skips the paths which end in a failed check, or else the sentence at which
+-- the first path ended.
+verdictOf :: [Either String Result] -> Verdict
+verdictOf outcomes = case [r | Right r <- outcomes] of
+  (r:_) -> Felicitous r
+  [] -> Infelicitous $ case outcomes of
+          (Left name:_) -> name
+          _ -> "(no sentence)"
+
+-- | Runs every path of a problem.  The paths are computed once, so that a
+-- caller can show them and count their labels without running the prover
+-- again.
+inferAll :: QT.Prover
+            -> Int   -- ^ How many type check results to keep per sentence
+            -> Int   -- ^ How many proof diagrams to keep
+            -> Bool  -- ^ Whether to log the type checking
+            -> Translation
+            -> IO [Either String Result]
+inferAll prover nTypeCheck nProof verbose translation =
+  ListT.toList $ paths prover nProof
+               $ discourse prover nTypeCheck verbose (signature translation) []
+               $ sentences translation
+
+-- | Checks the semantic felicity of each sentence in turn, and then asks the
+-- prover whether the premises prove the hypothesis, and whether they refute it.
+infer :: QT.Prover
+         -> Int   -- ^ How many type check results to keep per sentence
+         -> Int   -- ^ How many proof diagrams to keep
+         -> Bool  -- ^ Whether to log the type checking
+         -> Translation
+         -> IO Verdict
+infer prover nTypeCheck nProof verbose translation =
+  verdictOf <$> inferAll prover nTypeCheck nProof verbose translation
+
+-- | Takes n elements from the top of the list (a negative n: all of them).
+takeNbest :: Int -> ListT.ListT IO a -> ListT.ListT IO a
+takeNbest n = if n >= 0 then ListT.take n else id
 
 -- | The types of the underspecified terms of a sentence which do not depend on
 -- any variable bound around them.  Only those can be accommodated globally: a
