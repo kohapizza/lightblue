@@ -81,6 +81,7 @@ data GFOptions = GFOptions {
   , gfOutput :: FilePath        -- ^ Where to write, or stdout when empty
   , gfOpen :: Bool              -- ^ Whether to open the result in a browser
   , gfProverName :: NLI.ProverName
+  , gfNTypeCheck :: Int         -- ^ How many type check results to keep per sentence
   , gfNProof :: Int
   , gfMaxDepth :: Int
   , gfMaxTime :: Int
@@ -334,6 +335,12 @@ gfOptionParser = GFOptions
     <> value NLI.Wani
     <> help "Choose prover" )
   <*> option auto
+    ( long "ntypecheck"
+    <> showDefault
+    <> value 1
+    <> metavar "INT"
+    <> help "Keep N-best type check results for each sentence, each of which branches the rest of the discourse (a negative value: all)" )
+  <*> option auto
     ( long "nproof"
     <> showDefault
     <> value 1
@@ -448,7 +455,13 @@ gfMain GFOptions{..} = do
               QT.maxDepth = (Just gfMaxDepth),
               QT.maxTime = (Just gfMaxTime)
               }
-        verdict <- GFI.infer prover gfNProof gfVerbose translation
+        outcomes <- GFI.inferAll prover gfNTypeCheck gfNProof gfVerbose translation
+        let verdict = GFI.verdictOf outcomes
+            -- | How many paths end in each label, or in a failed check.
+            distribution = L.intercalate ", "
+              [ key ++ " " ++ show (length grp)
+              | grp@(key:_) <- L.group $ L.sort
+                  [ either ("infelicitous at " ++) (show . GFI.answer) o | o <- outcomes ] ]
         handle <- if null outputPath
                     then return S.stdout
                     else do h <- S.openFile outputPath S.WriteMode
@@ -471,6 +484,7 @@ gfMain GFOptions{..} = do
               GFI.Felicitous result -> show (GFI.answer result)
               GFI.Infelicitous name -> "(the felicity check of " ++ name ++ " failed)"
           , "Gold: " ++ maybe "(none)" show (GFTB.answer problem)
+          , "Paths: " ++ show (length outcomes) ++ " (" ++ distribution ++ ")"
           , "Accommodation: " ++ case verdict of
               GFI.Felicitous result | accs@(_:_) <- GFI.accommodations result ->
                 L.intercalate "; "
@@ -480,6 +494,7 @@ gfMain GFOptions{..} = do
         section handle "[Settings]"
         plain handle $ L.intercalate "\n"
           [ "prover: " ++ show gfProverName
+          , "ntypecheck: " ++ show gfNTypeCheck
           , "nproof: " ++ show gfNProof
           , "maxdepth: " ++ show gfMaxDepth
           , "maxtime: " ++ show gfMaxTime

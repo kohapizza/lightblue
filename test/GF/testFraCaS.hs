@@ -98,7 +98,7 @@ runCase problems c =
     Just problem -> case GFI.translateProblem problem of
       Left err -> return $ Left $ "translation failed: " ++ err
       Right translation -> do
-        verdict <- GFI.infer prover 1 False translation
+        verdict <- GFI.infer prover 1 1 False translation
         return $ case verdict of
           GFI.Infelicitous name ->
             Left $ "the felicity check of " ++ name ++ " failed"
